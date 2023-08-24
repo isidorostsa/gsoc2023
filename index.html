@@ -1,207 +1,859 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8">
-    <meta http-equiv="X-UA-Compatible" content="chrome=1">
-    <title>Minimal by Steve Smith</title>
+    <head>
+        <meta charset="utf-8" />
+        <meta http-equiv="X-UA-Compatible" content="chrome=1" />
+        <title>
+            C++17 structured bindings in the Clang Static Analyzer | GSoC @ LLVM
+            2022
+        </title>
+        <link rel="icon" href="./favicon.ico" />
+        <link rel="stylesheet" href="stylesheets/styles.css" />
+        <link rel="stylesheet" href="stylesheets/pygment_trac.css" />
+        <meta name="viewport" content="width=device-width" />
+        <!--[if lt IE 9]>
+            <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+        <![endif]-->
+    </head>
+    <body>
+        <div class="wrapper">
+            <header>
+                <a href="?">
+                    <img src="./img/LLVMWyvernBig.png" />
+                </a>
+            </header>
+            <section>
+                <h1>C++17 structured bindings in the Clang Static Analyzer</h1>
+                <h3>
+                    <strong
+                        ><a
+                            href="https://summerofcode.withgoogle.com/"
+                            target="_blank"
+                            >Google Summer of Code 2022</a
+                        ></strong
+                    >
+                    @
+                    <strong
+                        ><a href="https://llvm.org/" target="_blank">
+                            LLVM Compiler Infrastructure</a
+                        ></strong
+                    >
+                </h3>
 
-    <link rel="stylesheet" href="stylesheets/styles.css">
-    <link rel="stylesheet" href="stylesheets/pygment_trac.css">
-    <meta name="viewport" content="width=device-width">
-    <!--[if lt IE 9]>
-    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
-    <![endif]-->
-  </head>
-  <body>
-    <div class="wrapper">
-      <header>
-        <h1>Minimal</h1>
-        <p>A Theme for GitHub Pages</p>
-        <p class="view"><a href="http://github.com/orderedlist/minimal">View the Project on GitHub <small>orderedlist/minimal</small></a></p>
-        <ul>
-          <li><a href="https://github.com/orderedlist/minimal/zipball/master">Download <strong>ZIP File</strong></a></li>
-          <li><a href="https://github.com/orderedlist/minimal/tarball/master">Download <strong>TAR Ball</strong></a></li>
-          <li><a href="http://github.com/orderedlist/minimal">Fork On <strong>GitHub</strong></a></li>
-        </ul>
-      </header>
-      <section>
-        <h1>GitHub Flavored Markdown</h1>
+                <p>
+                    <span class="nameContainer">
+                        <strong>Dániel Domján</strong>
+                        <a
+                            href="https://www.linkedin.com/in/domjandaniel/"
+                            target="_blank"
+                        >
+                            <img src="./svg/linkedin.svg" />
+                        </a>
+                    </span>
+                    <!-- <br /> -->
+                    Eötvös Loránd University, Hungary
+                    <br />
+                    <a
+                        href="https://github.com/llvm/llvm-project/commits?author=isuckatcs&until=2022-09-12"
+                        target="_blank"
+                        >Commits on GitHub</a
+                    >
+                    |
+                    <a
+                        href="https://reviews.llvm.org/people/revisions/24684/"
+                        target="_blank"
+                        >Revisions on Phabricator</a
+                    >
+                </p>
 
-        <p><em>View the <a href="http://github.github.com/github-flavored-markdown/sample_content.html">source of this content</a>.</em></p>
+                <h2>Motivation</h2>
 
-        <p>Let's get the whole "linebreak" thing out of the way. The next paragraph contains two phrases separated by a single newline character:</p>
+                <p>
+                    In modern C++ projects it's common to use structured
+                    bindings to make the code more readable and easier to
+                    maintain. They allow developers to bind specified names,
+                    also referred to as identifiers to underlying fields or
+                    elements of a given initializer. For example:
+                </p>
+                <pre><code>Color color_instance{176, 183, 187};
+auto [r, g, b] = color_instance;
+uint8_t red = r;
+</code></pre>
+                <p>
+                    The structured binding declaration can be seen on the second
+                    line, where <code>r</code>, <code>g</code> and
+                    <code>b</code> are the specified names or identifiers, and
+                    <code>color_instance</code> is the initializer.
+                    <code>r</code>, <code>g</code> and
+                    <code>b</code>
+                    are bound to <code>176</code>, <code>183</code> and
+                    <code>187</code> respectively.
+                </p>
+                <p>
+                    On the next line the value of
+                    <code>r</code> is assigned to <code>red</code>, so the value
+                    of <code>red</code> is <code>176</code>, however the Clang
+                    Static Analyzer was not aware of that prior to this project
+                    due to the lack of support for structured bindings. Since
+                    the analyzer didn't know what <code>r</code> is, in some
+                    cases it falsely reported a warning about assigning an
+                    uninitialized value, as it happened in
+                    <a
+                        href="https://github.com/llvm/llvm-project/issues/42387"
+                        target="_blank"
+                        >#42387</a
+                    >.
+                </p>
 
-        <p>Roses are red<br>
-        Violets are blue</p>
+                <p>
+                    Incomplete support for structured bindings in the analyzer
+                    was a common source of false positives. The goal of this
+                    project was to introduce structured bindings to the
+                    analyzer, and reduce the amount of false positive reports
+                    while creating new opportunities to catch more bugs.
+                </p>
 
-        <p>The next paragraph has the same phrases, but now they are separated by two spaces and a newline character:</p>
+                <h2>Approach</h2>
 
-        <p>Roses are red<br><br>
-        Violets are blue</p>
+                <p>
+                    There are multiple different ways to declare a structured
+                    binding, though from an analysis perspective only 2 of them
+                    needs to be treated differently. Binding by value and
+                    binding by reference.
+                </p>
 
-        <p>Oh, and one thing I cannot stand is the mangling of words with multiple underscores in them like perform_complicated_task or do_this_and_do_that_and_another_thing.</p>
+                <p>
+                    When a binding is created by value, the initializer is first
+                    copied, and the identifiers refer to the fields/elements of
+                    the copy. In the other case no copy gets created, the
+                    identifiers refer to the values inside the original
+                    initializer instead.
+                </p>
 
-        <h2>A bit of the GitHub spice</h2>
+                <p>
+                    There are also 3 structured binding syntaxes defined by the
+                    standard. Their simplified versions look like this:
+                </p>
 
-        <p>In addition to the changes in the previous section, certain references are auto-linked:</p>
-
-        <ul>
-          <li>SHA: be6a8cc1c1ecfe9489fb51e4869af15a13fc2cd2</li>
-          <li>User@SHA ref: <a href="https://github.com/mojombo/product/commit/be6a8cc1c1ecfe9489fb51e4869af15a13fc2cd2" class="commit-link">mojombo@<tt>be6a8cc</tt></a></li>
-          <li>User/Project@SHA: <a href="https://github.com/mojombo/god/commit/be6a8cc1c1ecfe9489fb51e4869af15a13fc2cd2" class="commit-link">mojombo/god@<tt>be6a8cc</tt></a></li>
-          <li>#Num: <a href="https://github.com/github/product/issues/1" class="issue-link" title="Baseline: What is up in the air right now?">#1</a></li>
-          <li>User/#Num: mojombo#1</li>
-          <li>User/Project#Num: <a href="https://github.com/mojombo/god/issues/1" class="issue-link" title="The server is not available (or you do not have permissions to access it)">mojombo/god#1</a></li>
-        </ul>
-
-        <p>These are dangerous goodies though, and we need to make sure email addresses don't get mangled:</p>
-
-        <p>My email addy is <a href="mailto:tom@github.com">tom@github.com</a>.</p>
-
-        <h2>Math is hard, let's go shopping</h2>
-
-        <p>In first grade I learned that 5 &gt; 3 and 2 &lt; 7. Maybe some arrows. 1 -&gt; 2 -&gt; 3. 9 &lt;- 8 &lt;- 7.</p>
-
-        <p>Triangles man! a^2 + b^2 = c^2</p>
-
-        <h2>We all like making lists</h2>
-
-        <p>The above header should be an H2 tag. Now, for a list of fruits:</p>
-
-        <ul>
-          <li>Red Apples</li>
-          <li>Purple Grapes</li>
-          <li>Green Kiwifruits</li>
-        </ul>
-
-        <p>Let's get crazy:</p>
-
-        <ol>
-          <li>
-            <p>This is a list item with two paragraphs. Lorem ipsum dolor<br>
-            sit amet, consectetuer adipiscing elit. Aliquam hendrerit<br>
-            mi posuere lectus.</p>
-
-            <p>Vestibulum enim wisi, viverra nec, fringilla in, laoreet<br>
-            vitae, risus. Donec sit amet nisl. Aliquam semper ipsum<br>
-            sit amet velit.</p>
-          </li>
-          <li><p>Suspendisse id sem consectetuer libero luctus adipiscing.</p></li>
-        </ol>
-
-        <p>What about some code <strong>in</strong> a list? That's insane, right?</p>
-
-        <ol>
-          <li>
-            <p>In Ruby you can map like this:</p>
-
-            <pre><code>['a', 'b'].map { |x| x.uppercase }</code></pre>
-          </li>
-          <li>
-            <p>In Rails, you can do a shortcut:</p>
-
-            <pre><code>['a', 'b'].map(&amp;:uppercase)</code></pre>
-          </li>
-        </ol>
-
-        <p>Some people seem to like definition lists</p>
-
-        <dl>
-          <dt>Lower cost</dt>
-          <dd>The new version of this product costs significantly less than the previous one!</dd>
-          <dt>Easier to use</dt>
-          <dd>We've changed the product so that it's much easier to use!</dd>
-        </dl>
-
-        <h2>I am a robot</h2>
-
-        <p>Maybe you want to print <code>robot</code> to the console 1000 times. Why not?</p>
-
-        <pre><code>def robot_invasion
-  puts("robot " * 1000)
-end
+                <pre><code>auto [identifier-list] = initializer; (1)
+auto [identifier-list]{initializer};  (2)
+auto [identifier-list](initializer);  (3)
 </code></pre>
 
-        <p>You see, that was formatted as code because it's been indented by four spaces.</p>
+                <p>
+                    In meaning there's a difference between (1) and (2)/(3) only
+                    if the initializer is an array and the binding is created by
+                    value. In that case if syntax (1) is used, when the
+                    initializer is copied, each element of the copy will be
+                    copy-initialized, while using syntax (2)/(3) will result in
+                    each element being direct-initialized. When it comes to
+                    static analysis, the same operations are performed in all 3
+                    cases so there's no need to treat them separately.
+                </p>
 
-        <p>How about we throw some angle braces and ampersands in there?</p>
+                <p>
+                    Although there are also 3 different cases when structured
+                    bindings can be created, and each of them does behave
+                    differently. While handling binding by reference is
+                    relatively simple in all case, by value binding requires
+                    major changes in the analyzer for most of them.
+                </p>
 
-        <pre><code>&lt;div class="footer"&gt;
-    &amp;copy; 2004 Foo Corporation
-&lt;/div&gt;
+                <h3>Case 1: binding to data members</h3>
+
+                <p>
+                    When a binding to data members is created by value, the
+                    object is first copied and the identifiers refer to the the
+                    non-static data members of the copy.
+                </p>
+
+                <pre><code>struct S {
+    int x;
+    double y;
+};
+
+void fn() {
+    S s{1, 2.0};
+
+    auto [a, b] = s;
+}
+</code></pre>
+                <p>
+                    In this snippet <code>s</code> is copied first and
+                    <code>a</code> and <code>b</code> refer to the data members
+                    of the copy, in the same order as they are declared.
+                    Identifier <code>a</code> corresponds to <code>x</code> and
+                    <code>b</code> corresponds to <code>y</code> respectively.
+                </p>
+
+                <p>
+                    The identifiers themselves are not variables, just names
+                    referring to the members of the copy, so their evaluation
+                    happens when they are used somewhere. For example:
+                </p>
+
+                <pre><code>auto [a, b] = s;
+int fst = a;
+</code></pre>
+                <p>
+                    When the the statement
+                    <code>int fst = a;</code> is reached, the value of
+                    <code>a</code> is the value of the first field,
+                    <code>x</code> inside the copy of <code>s</code>, so all
+                    that's left to do is telling the analyzer to look that value
+                    up and assign it to <code>fst</code>.
+                </p>
+
+                <p>
+                    Initially the analyzer was able to create a copy of the
+                    struct, so the only work to be done was implementing how to
+                    look the required value up.
+                </p>
+
+                <p>
+                    The final step of this case was to handle when data members
+                    are bound by reference. In this case the initializer is not
+                    copied and the identifiers are references to the data
+                    members of the original initializer.
+                </p>
+
+                <pre><code>S s{1, 2.0};
+
+auto &[x1, y1] = s;
+auto &&[x2, y2] = s;
+</code></pre>
+                <p>
+                    Inside the analyzer there's no need to differentiate between
+                    binding by
+                    <code>&amp;</code> (lvalue reference) and
+                    <code>&amp;&amp;</code> (rvalue reference). In both cases
+                    it's enough to look up the specific value from the original
+                    object.
+                </p>
+
+                <h3>Case 2: binding a tuple-like type</h3>
+
+                <p>
+                    Binding a tuple-like type by value is similar to data
+                    members in terms of the tuple-like type is first copied.
+                    After that instead of treating each identifier as an alias
+                    to the corresponding member of the copy, a new variable is
+                    created for each of them, which has the same type and value
+                    as it's respective member.
+                </p>
+                <pre><code>std::pair&lt;int, char&gt; p{1, 'a'};
+                    
+auto [a, b] = p;
 </code></pre>
 
-        <h2>Set in stone</h2>
+                <p>
+                    The snippet above can be viewed as if there are 2 variable
+                    declarations,
+                    <code>int a = 1;</code> and <code>char b = 'a';</code>.
+                </p>
 
-        <p>Preformatted blocks are useful for ASCII art:</p>
+                <p>
+                    The idea here is to replicate this behaviour, and after the
+                    object has been copied, create a new variable for each
+                    identifier, and initialize them with the proper values from
+                    the copy. The variable creation is driven by the
+                    <a
+                        href="https://clang.llvm.org/docs/DataFlowAnalysisIntro.html"
+                        target="_blank"
+                        >Control Flow Graph</a
+                    >, so the analyzer needed to be modified so that when it
+                    sees a structured binding declaration to a tuple-like type
+                    during CFG construction, it also creates a new variable
+                    declaration for each identifier in the CFG.
+                </p>
 
-        <pre>             ,-.
-    ,     ,-.   ,-.
-   / \   (   )-(   )
-   \ |  ,.&gt;-(   )-&lt;
-    \|,' (   )-(   )
-     Y ___`-'   `-'
-     |/__/   `-'
-     |
-     |
-     |    -hrr-
-  ___|_____________
-</pre>
+                <p>
+                    When a tuple-like type is bound by reference, the
+                    initializer is not copied, but the variables are still
+                    created for each identifier and in this case they are
+                    reference types.
+                </p>
 
-        <h2>Playing the blame game</h2>
+                <pre><code>std::pair&lt;int, char&gt; p{1, 'a'};
+                    
+auto &[a1, b1] = p;
+auto &&[a2, b2] = p;
+</code></pre>
 
-        <p>If you need to blame someone, the best way to do so is by quoting them:</p>
+                <p>
+                    In both cases the new variables are lvalue reference types,
+                    so both <code>a1</code> and <code>a2</code> have the type of
+                    <code>int &</code> and <code>b1</code> and
+                    <code>b2</code> have the type of <code>char &</code>. Also
+                    these variables are references to the elements of
+                    <code>p</code>.
+                </p>
 
-        <blockquote>
-        <p>I, at any rate, am convinced that He does not throw dice.</p>
-        </blockquote>
+                <h3>Case 3: binding an array</h3>
+                <p>
+                    Binding an array by value works like binding data members by
+                    value. First the array is copied, and the identifiers refer
+                    to the values of the corresponding elements of the copy.
+                </p>
+                <pre><code>int arr[] = {1, 2, 3};
 
-        <p>Or perhaps someone a little less eloquent:</p>
+auto [x, y, z] = arr;
+</code></pre>
 
-        <blockquote>
-        <p>I wish you'd have given me this written question ahead of time so I<br>
-        could plan for it... I'm sure something will pop into my head here in<br>
-        the midst of this press conference, with all the pressure of trying to<br>
-        come up with answer, but it hadn't yet...</p>
+                <p>
+                    In the snippet above <code>arr</code> is copied and the
+                    identifiers (<code>x</code>, <code>y</code>, <code>z</code>)
+                    refer to the elements of the copy. The copy of the array is
+                    created by an
+                    <code>
+                        <a
+                            href="https://clang.llvm.org/doxygen/classclang_1_1ArrayInitLoopExpr.html"
+                            target="_blank"
+                            >ArrayInitLoopExpr</a
+                        ></code
+                    >, which is also responsible for creating a copy in an
+                    implicit copy/move constructor of a class with an array
+                    member and when a lambda captures an array by value. This
+                    means that handling the mentioned expression can provide
+                    more information to the analyzer about aggregate types and
+                    lambdas.
+                </p>
 
-        <p>I don't want to sound like<br>
-        I have made no mistakes. I'm confident I have. I just haven't - you<br>
-        just put me under the spot here, and maybe I'm not as quick on my feet<br>
-        as I should be in coming up with one.</p>
-        </blockquote>
+                <p>
+                    The idea is to copy the array with as little overhead as
+                    possible, so for POD arrays the desired approach is to
+                    create a
+                    <code
+                        ><a
+                            href="https://clang.llvm.org/docs/analyzer/developer-docs/RegionStore.html#lazy-bindings-lazycompoundval"
+                            target="_blank"
+                            >LazyCompoundVal</a
+                        ></code
+                    >, which basically means that the analyzer associates the
+                    new array with a snapshot of the old one, instead of
+                    creating a memberwise copy.
+                </p>
 
-        <h2>Table for two</h2>
+                <p>
+                    While it is the desired approach for POD arrays, it is
+                    inaccurate for non-POD ones, because the copy constructor
+                    can have side effects. For example take a look at this
+                    snippet:
+                </p>
 
-        <table>
-          <tbody>
-        <tr>
-            <th>ID</th>
-        <th>Name</th>
-        <th>Rank</th>
-          </tr>
-          <tr>
-            <td>1</td>
-        <td>Tom Preston-Werner</td>
-        <td>Awesome</td>
-          </tr>
-          <tr>
-            <td>2</td>
-        <td>Albert Einstein</td>
-        <td>Nearly as awesome</td>
-          </tr>
-        </tbody>
-        </table>
+                <pre><code>struct S {
+    inline static int c = 0;
+    int i;
+                  
+    S() : i(++c) {}
+    S(const S &amp;copy) { i = copy.i + 1; }
+};
 
-        <h2>Crazy linking action</h2>
+void fn() {
+    S arr[2];
 
-        <p>I get 10 times more traffic from <a href="http://google.com/" title="Google">Google</a> than from<br>
-        <a href="http://search.yahoo.com/" title="Yahoo Search">Yahoo</a> or <a href="http://search.msn.com/" title="MSN Search">MSN</a>.</p>
-      </section>
-      <footer>
-        <p>This project is maintained by <a href="http://github.com/orderedlist">Steve Smith</a></p>
-        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
-      </footer>
-    </div>
-    <script src="javascripts/scale.fix.js"></script>
-  </body>
+    auto [x, y] = arr;
+}
+</code></pre>
+
+                <p>
+                    The copy constructor of <code>S</code> has a side effect,
+                    which means it must be evaluated for every element to get an
+                    accurate result.
+                </p>
+
+                <p>
+                    Initially the analyzer wasn't able to model non-POD arrays,
+                    so before it could start evaluating structured bindings to
+                    such arrays, it needed to be taught how to create and
+                    destroy them.
+                </p>
+
+                <p>
+                    The idea is the same for both creating the array and
+                    creating a copy of it. The analyzer should call the
+                    constructor/copy constructor for each of the elements in
+                    order, and construct each element into the specific target
+                    memory region. Later when the lifetime of the array ends,
+                    the destructors also need to be invoked, but in a reverse
+                    order. The destructor of the last element is invoked first.
+                </p>
+
+                <p>
+                    Binding by reference works the same way as in case of data
+                    members. The array is not copied and the identifiers are
+                    references to the elements in the original array.
+                </p>
+
+                <h2>Implementation</h2>
+
+                <ul>
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D127993"
+                            target="_blank"
+                            >D127993</a
+                        >
+                        was the first patch applied to the analyzer and it put
+                        the initializer of the structured binding into the
+                        Control Flow Graph. Because the initializer was missing
+                        from the CFG, in some cases it had already been removed
+                        from the analyzer's internal state, before it even
+                        reached the structured binding declaration. As a result
+                        the analyzer had no information about what object were
+                        the identifiers being bound to.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D128064"
+                            target="_blank"
+                        >
+                            D128064
+                        </a>
+                        introduced a "Small array binding policy" to the
+                        analyzer, which is similar to the already existing
+                        "Small struct binding policy". As a result if a
+                        <code>LazyCompoundVal</code> of a sufficiently small
+                        (smaller than 5 elements) array is about to be created,
+                        a by value copy is created instead. This allows the
+                        analyzer to produce more accurate warning messages.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D127643"
+                            target="_blank"
+                        >
+                            D127643
+                        </a>
+                        is a simple patch allowing the analyzer to handle
+                        structured bindings to data members. It tells the
+                        analyzer where to look up a required values.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D126613"
+                            target="_blank"
+                            >D126613</a
+                        >
+                        implemented <code>ArrayInitLoopExpr</code> and
+                        structured bindings to POD arrays.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D128716"
+                            target="_blank"
+                        >
+                            D128716
+                        </a>
+                        fixed a bug when an identifier introduced to a reference
+                        type was treated as if it was a non-reference type. An
+                        example snippet that helps understanding the bug:
+                        <br />
+                        <br />
+                        <pre><code>struct S { int &amp;x; };
+
+void fn() {
+    int i = 1;
+    S s{i};
+
+    auto [a] = s;
+}</code></pre>
+                        Here the type of <code>a</code> is <code>int &</code>,
+                        however it was treated as <code>int</code>, which lead
+                        to false positives.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D127973"
+                            target="_blank"
+                        >
+                            D127973
+                        </a>
+                        made it possible to evaluate the constructor of each
+                        element in a non-POD array of less than or equal to 4
+                        elements. The analyzer allows the same statement to be
+                        repeated 4 times by default, hence the 4 element limit.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D129496"
+                            target="_blank"
+                        >
+                            D129496
+                        </a>
+                        applied the ideas of the previous patch to
+                        <code>ArrayInitLoopExpr</code>, and made it possible to
+                        create structured bindings to small non-POD arrays as
+                        well as to evaluate implicit copy and move constructors
+                        of classes/structs with non-POD array fields properly.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D129967"
+                            target="_blank"
+                        >
+                            D129967
+                        </a>
+                        has been extracted from the previous patch and
+                        introduced a new
+                        <code>
+                            <a
+                                href="https://clang.llvm.org/doxygen/classclang_1_1ConstructionContext.html"
+                                target="_blank"
+                            >
+                                ConstructionContext</a
+                            ></code
+                        >
+                        for lambda captures, and introduced capturing non-POD
+                        arrays in lambdas by value.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D128837"
+                            target="_blank"
+                        >
+                            D128837
+                        </a>
+                        introduced structured bindings to tuple-like types. It
+                        modified the CFG and the
+                        <a
+                            href="https://discourse.llvm.org/t/analyzer-an-in-depth-look-at-liveness-analysis-in-the-static-analyzer/56008"
+                            target="_blank"
+                            >Liveness Analysis</a
+                        >
+                        so that a new variable is created for each identifier,
+                        and it's lifetime is properly managed.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D131784"
+                            target="_blank"
+                        >
+                            D131784
+                        </a>
+                        fixed an issue introduced by
+                        <a
+                            href="https://reviews.llvm.org/D129967"
+                            target="_blank"
+                        >
+                            D129967 </a
+                        >, which lead to a crash on copy elided initialized
+                        lambda captures. E.g.:
+                        <code>[var = S()](){};</code> compiled with
+                        <code>-std=c++17</code> or higher.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D131944"
+                            target="_blank"
+                        >
+                            D131944
+                        </a>
+                        removed pattern matching for lambda capture initializers
+                        completely as they were hard to maintain and caused
+                        crashes.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D131840"
+                            target="_blank"
+                        >
+                            D131840
+                        </a>
+                        introduced a solution for handling multidimensional
+                        non-POD arrays in <code>ArrayInitLoopExpr</code>, so the
+                        analyzer can properly model when such arrays are used in
+                        structured bindings, lambda captures and implicit
+                        copy/move constructors.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D130737"
+                            target="_blank"
+                        >
+                            D130737
+                        </a>
+                        introduced non-POD array destruction to the analyzer, so
+                        now it's possible to properly reason about non-POD
+                        arrays when they're small enough. Before this patch the
+                        analyzer could reason about non-POD array construction,
+                        but still failed to evaluate their destruction.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D131501"
+                            target="_blank"
+                        >
+                            D131501
+                        </a>
+                        introduced special handling for 0 length arrays, which
+                        are basically no-ops, so no machine code is generated
+                        for them. Before this patch they were treated by the
+                        analyzer as if they had 1 element, which could lead to
+                        false positives by invoking the constructor and
+                        destructor once.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D131187"
+                            target="_blank"
+                        >
+                            D131187
+                        </a>
+                        added all the temporary data used to evaluate non-POD
+                        array construction and destruction to the
+                        <a
+                            href="https://llvm.org/devmtg/2019-10/slides/Dergachev-DevelopingTheClangStaticAnalyzer.pdf"
+                            target="_blank"
+                            >Exploded Graph</a
+                        >
+                        to make it easier to track which element is being
+                        constructed or destructed at a specific point.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D131262"
+                            target="_blank"
+                        >
+                            D131262
+                        </a>
+                        increased the accuracy of the bug reports. With this
+                        patch the bug reporter can keep tracking a specific
+                        region even if it encounters a trivial copy/move
+                        construction. This patch also improved tracking values
+                        inside initializer lists a bit.
+                    </li>
+                </ul>
+                <h3>Additional patches</h3>
+                <ul>
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D132654"
+                            target="_blank"
+                        >
+                            D132654
+                        </a>
+                        fixed a false positive warning in a
+                        <a
+                            href="https://clang.llvm.org/extra/clang-tidy/"
+                            target="_blank"
+                            >clang-tidy</a
+                        >
+                        checker that was reported when an array was used as the
+                        initializer of a structured binding or was captured in a
+                        lambda by value.
+                    </li>
+                    <br />
+                    <li>
+                        <a
+                            href="https://reviews.llvm.org/D131299"
+                            target="_blank"
+                        >
+                            D131299
+                        </a>
+                        created a new analyzer
+                        <a
+                            href="https://clang.llvm.org/docs/analyzer/checkers.html#core-uninitialized-newarraysize-c"
+                            target="_blank"
+                            >checker</a
+                        >
+                        that warns if the expression used to determine the
+                        number of elements inside <code>new[]</code> evaluates
+                        to a garbage value.
+                    </li>
+                </ul>
+
+                <h2>Results</h2>
+                <p>
+                    Structured bindings are a C++17 addition, so testing the
+                    changes required projects written in C++17 or above. Finding
+                    sufficiently large projects with extensive structured
+                    binding usage was quite challenging, since the majority of
+                    large open-source C++ projects are written in C++14 or
+                    below.
+                </p>
+                <p>
+                    Most of the testing was done on
+                    <a href="https://github.com/EQMG/Acid" target="_blank"
+                        >Acid</a
+                    >
+                    and
+                    <a href="https://github.com/WebKit/WebKit" target="_blank"
+                        >WebKit</a
+                    >
+                    and their dependencies, including
+                    <a
+                        href="https://github.com/bulletphysics/bullet3"
+                        target="_blank"
+                        >Bullet</a
+                    >,
+                    <a
+                        href="https://github.com/KhronosGroup/glslang"
+                        target="_blank"
+                        >Glslang</a
+                    >
+                    and
+                    <a href="https://github.com/glfw/glfw" target="_blank"
+                        >GLFW</a
+                    >. On top that, the changes have also been evaluated on
+                    several C++14 or earlier open-source projects, including
+                    <a href="https://github.com/qt/qtbase" target="_blank">Qt</a
+                    >,
+                    <a href="https://github.com/sqlite/sqlite" target="_blank"
+                        >SQLite</a
+                    >
+                    and
+                    <a
+                        href="https://github.com/llvm/llvm-project"
+                        target="_blank"
+                        >LLVM</a
+                    >
+                    itself.
+                </p>
+
+                <p>
+                    Both the coverage and the accuracy of the analysis have been
+                    improved. On WebKit 81 false positives have been replaced by
+                    22 true positives and
+                    <a
+                        href="https://github.com/llvm/llvm-project/issues/42387"
+                        target="_blank"
+                        >Issue #42387</a
+                    >
+                    has been resolved too.
+                </p>
+
+                <h2>Future work</h2>
+
+                <p>
+                    There are several improvements that could increase the
+                    accuracy and coverage of the analysis. Most of them are not
+                    structured binding specific, but are strongly connected to
+                    the implementations used to teach the analyzer about
+                    structured bindings.
+                </p>
+
+                <ul>
+                    <li>
+                        Currently the analyzer can only reason about known
+                        values inside a <code>LazyCompoundVal</code>. It can't
+                        tell the difference between <code>Unknown</code> and
+                        <code>Undefined</code> values. This sometimes leads to
+                        false negatives, so an uninitialized assignment might
+                        not be detected. Modifying the analyzer so that it can
+                        decide what such values are could increase the accuracy
+                        of the analysis.
+                    </li>
+                    <br />
+                    <li>
+                        Detecting whether a constructor/destructor has side
+                        effects could also increase the accuracy of the
+                        analysis. For example the
+                        <a
+                            href="https://clang.llvm.org/docs/analyzer/checkers.html#deadcode"
+                            target="_blank"
+                            >Dead Code Checker</a
+                        >
+                        relies on such information, and because it's not
+                        provided with that, it can't detect when a non-POD
+                        variable is unused. Also if the analyzer knew if there
+                        are no side effects, invoking the constructor for every
+                        element in a non-POD array could also be avoided.
+                    </li>
+                    <br />
+                    <li>
+                        Analysis of non-POD
+                        <a
+                            href="https://en.cppreference.com/w/c/language/array#Variable-length_arrays"
+                            target="_blank"
+                            >variable-length arrays</a
+                        >. Currently the analyzer only handles arrays if their
+                        element count is known at compile time.
+                    </li>
+                    <br />
+                    <li>
+                        Creating a new <code>ConstructionContext</code> for
+                        lambdas. Currently lambdas are constructed into a
+                        temporary memory region from which they are moved to
+                        their final region. A
+                        <code>ConstructionContext</code> would allow the
+                        analyzer to construct the lambdas directly into their
+                        final regions, so the temporary construction could be
+                        avoided.
+                    </li>
+                </ul>
+
+                <h2>Special thanks</h2>
+
+                <p>
+                    I'd like to thank
+                    <a href="https://github.com/haoNoQ" target="_blank"
+                        >Artem Dergachev</a
+                    >,
+                    <a href="https://github.com/xazax-hun" target="_blank"
+                        >Gábor Horváth</a
+                    >,
+                    <a href="https://github.com/Szelethus" target="_blank"
+                        >Kristóf Umann</a
+                    >
+                    and
+                    <a href="https://github.com/t-rasmud" target="_blank"
+                        >Rashmi Mudduluru</a
+                    >
+                    for mentoring the project, helping with testing the various
+                    patches on a couple of open-source projects and answering my
+                    questions even during the weekends.
+                    <br />
+                    <br />
+                    I'd also like to thank
+                    <a href="https://github.com/usama54321" target="_blank"
+                        >Usama Hameed</a
+                    >,
+                    <a href="https://github.com/ziqingluo-90" target="_blank"
+                        >Ziqing Luo</a
+                    >
+                    and
+                    <a href="https://github.com/malavikasamak" target="_blank"
+                        >Malavika Samak</a
+                    >
+                    for being part our weekly discussions, as well as
+                    <a href="https://github.com/steakhal" target="_blank"
+                        >Balázs Benics</a
+                    >
+                    and
+                    <a href="https://github.com/martong" target="_blank"
+                        >Gábor Márton</a
+                    >
+                    for code reviews and ideas about how the new features could
+                    be improved.
+                </p>
+            </section>
+            <footer>
+                <p>
+                    <small
+                        >Hosted on GitHub Pages &mdash; Theme by
+                        <a href="https://github.com/orderedlist" target="_blank"
+                            >orderedlist</a
+                        ></small
+                    >
+                </p>
+            </footer>
+        </div>
+        <script src="javascripts/scale.fix.js"></script>
+    </body>
 </html>
