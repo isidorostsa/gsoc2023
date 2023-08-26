@@ -1,403 +1,392 @@
 <!DOCTYPE html>
 <html>
 
-<head>
-    <meta charset="utf-8" />
-    <meta http-equiv="X-UA-Compatible" content="chrome=1" />
-    <title>
-        P1144 Relocation Semantics | GSoC @ HPX
-        2023
-    </title>
-    <link rel="icon" href="./favicon.ico" />
-    <link rel="stylesheet" href="stylesheets/styles.css" />
-    <link rel="stylesheet" href="stylesheets/pygment_trac.css" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/vivus/0.4.6/vivus.min.js"></script>
-    <meta name="viewport" content="width=device-width" />
-    <!--[if lt IE 9]>
+    <head>
+        <meta charset="utf-8" />
+        <meta http-equiv="X-UA-Compatible" content="chrome=1" />
+        <title>
+            P1144 Relocation Semantics | GSoC @ HPX
+            2023
+        </title>
+        <link rel="icon" href="./favicon.ico" />
+        <link rel="stylesheet" href="stylesheets/styles.css" />
+        <link rel="stylesheet" href="stylesheets/pygment_trac.css" />
+        <script
+            src="https://cdnjs.cloudflare.com/ajax/libs/vivus/0.4.6/vivus.min.js"></script>
+        <meta name="viewport" content="width=device-width" />
+        <!--[if lt IE 9]>
             <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
         <![endif]-->
-</head>
+    </head>
 
+    <body>
+        <div class="wrapper">
+            <header>
+                <a href="https://stellar-group.org/libraries/hpx/">
+                    <img src="./img/stellar_group_icon.svg" width="300px" />
+                </a>
+            </header>
+            <section>
+                <h1>Relocation Semantics in the HPX Library</h1>
+                <h3>
+                    <strong><a href="https://summerofcode.withgoogle.com/"
+                            target="_blank">Google Summer of Code
+                            2023</a></strong>
+                    @
+                    <strong><a href="https://stellar-group.org/libraries/hpx/"
+                            target="_blank">
+                            HPX by the Ste||ar group</a></strong>
+                </h3>
 
-<body>
-    <div class="wrapper">
-        <header>
-            <a href="https://stellar-group.org/libraries/hpx/">
-                <img src="./img/stellar_group_icon.svg" width="300px" />
-            </a>
-        </header>
-        <section>
-            <h1>Relocation Semantics in the HPX Library</h1>
-            <h3>
-                <strong><a href="https://summerofcode.withgoogle.com/" target="_blank">Google Summer of Code
-                        2023</a></strong>
-                @
-                <strong><a href="https://stellar-group.org/libraries/hpx/" target="_blank">
-                        HPX by the Ste||ar group</a></strong>
-            </h3>
+                <p>
+                    <span class="nameContainer">
+                        <strong>Isidoros Tsaousis-Seiras</strong>
+                        <a href="https://www.github.com/isidorostsa"
+                            target="_blank">
+                            <img src="./img/github.svg" width="15px" />
+                        </a>
+                    </span>
+                    <br />
+                    Aristotle's University of Thessaloniki
+                    <br />
+                    <a
+                        href="https://github.com/STEllAR-GROUP/hpx/commits?author=isidorostsa&until=2023-09-12"
+                        target="_blank">Commits on GitHub</a>
+                </p>
 
-            <p>
-                <span class="nameContainer">
-                    <strong>Isidoros Tsaousis-Seiras</strong>
-                    <a href="https://www.github.com/isidorostsa" target="_blank">
-                        <img src="./img/github.svg" width="15px" />
-                    </a>
-                </span>
+                <h2>Motivation</h2>
+
+                <p>
+                    HPX provides highly optimized facilities to ensure maximal
+                    resource utilization.
+                    However there is still performance to be gained in object
+                    movement tasks. Proposal
+                    <a href="https://isocpp.org/files/papers/P1144R8.html">P1144</a>
+                    introduces the idea
+                    of <i>relocation</i>. A facility used to hide the
+                    boilerplate of object relocation, and optimize it when 
+                    possible. Essentially, when relocating a buffer of objects, 
+                    the <code>uninitialized_relocate</code>
+                    algorithm will determine if it is valid to reduce multiple
+                    move-constructor and destructor calls to a
+                    single <code>memcpy()</code>. This improvement impacts key
+                    primitives like
+                    <code>vector.reserve()</code>,
+                    leading to speedup in higher-level programs.
+                    <br />
+                </p>
+                <p>
+                    If <code>T</code> is a <i>trivially relocatable</i> type and
+                    the buffer is contiguous, then
+                    <code>uninitialized_relocate_n</code> will simply
+                    call <code>memcpy</code> once, or <code>n</code> times if
+                    the buffer is not contiguous. Otherwise it
+                    will <code>move</code>+<code>destroy</code> on each object.
+                </p>
+
+                <p>
+                    Incomplete support for structured bindings in the analyzer
+                    was a common source of false positives. The goal of this
+                    project was to introduce structured bindings to the
+                    analyzer, and reduce the amount of false positive reports
+                    while creating new opportunities to catch more bugs.
+                </p>
+
+                <h2>Approach</h2>
+
+                <p>
+                    There are two main steps to implement relocation semantics.
+                    First, we need to
+                    determine if a type is trivially relocatable. Second, we
+                    need to implement the
+                    relocation mechanism. There is also a third step, which is
+                    specific to HPX,
+                    and that is to implement the parallelized version of the
+                    procedure.
+                </p>
+
+                <h3>1&rpar; Detecting trivial relocatability</h3>
+
+                <p>
+                    Most types are agnostic to relocation. For example, an <code>std::vector</code>
+                    object <b>is</b>
+                    trivially relocatable, because it is just a wrapper around
+                    pointer to a buffer.
+
+                </p>
+                <div style="text-align: center;">
+                    <img src="./img/vector_relocation_no_border.svg" width="85%" />
+                </div>
                 <br />
-                Aristotle's University of Thessaloniki
+                <p>
+                    It is perfectly safe to <code>memcpy</code> an <code>std::vector</code>
+                    to a new location and
+                    <code>std::free</code>
+                    the old object. That is because:
+                </p>
+                <ul style="margin-top: -10px;">
+                    <li>No destructor will be called and thus the buffer will
+                        stay intact</li>
+                    <li>The new vector will take care of deallocating the buffer
+                        when it is destroyed</li>
+                </ul>
+                <p>
+                    In contrast, an <code>std::string</code> <b>is not</b>
+                    trivially relocatable, since
+                    it contains a pointer to the internal buffer that is used
+                    for small string optimization (sso).
+                </p>
+
+                <div style="text-align: center;">
+                    <img src="./img/string_relocation_no_border.svg" width="85%" />
+                </div>
                 <br />
-                <a href="https://github.com/STEllAR-GROUP/hpx/commits?author=isidorostsa&until=2023-09-12"
-                    target="_blank">Commits on GitHub</a>
-            </p>
+                <p>
+                    The copied object will point to the same buffer as the
+                    original, and when the original object is
+                    <code>std::free</code>-ed, the copied object will be left
+                    with a dangling pointer.
+                </p>
 
-            <h2>Motivation</h2>
-
-            <p>
-                HPX provides highly optimized facilities to ensure maximal resource utilization.
-                However there is still performance to be gained in object movement tasks. Proposal
-                <a href="https://isocpp.org/files/papers/P1144R8.html">P1144</a> introduces the idea
-                of <i>relocation</i>. A facility used to hide the boilerplate of object relocation, and
-                optimize it when possible. Essentially, when relocating a buffer of objects, <code>std::relocate</code>
-                will determine if it is valid to reduce multiple move-constructor and destructor calls to a
-                single <code>memcpy()</code>. This improvement impacts key primitives like
-                <code>vector.reserve()</code>,
-                leading to speedup in higher-level programs.
+                <p>
+                    Another example of a <b>non</b>-trivially relocatable type
+                    is <code>std::list</code>. It is a circularly
+                    linked
+                    list, so the last element points to the first.
+                </p>
+                <div style="text-align: center;">
+                    <img src="./img/list_relocation_no_border.svg" width="85%" />
+                </div>
                 <br />
-                The interface to use this facility is simple:
-            </p>
-            <!-- HTML generated using hilite.me -->
-            <div
-                style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
-                <pre style="margin: 0; line-height: 125%">
-<span style="color: #aaaaaa; font-style: italic">// t_buffer is a buffer of n T objects</span>
-<span style="color: #aaaaaa; font-style: italic">// t_buffer_new is a buffer with enough 
-//                      space for n T objects</span>
+                <p>
+                    If we were to <code>memcpy</code> the list (the first node)
+                    to a new location, the last element would
+                    still point to the old location, so after <code>free</code>-ing,
+                    that pointer would be dangling.
+                </p>
 
-uninitialized_relocate_n(
-    t_buffer, n, t_buffer_new
-);
+                <p>
+                    Unfortunately, there is no tell-tale sign that a type is
+                    trivially relocatable. But, there are ways to
+                    cover many common cases:
+                    <ol>
+                        <li>types that are <i>trivially copyable</i></li>
+                        <li>types that have no methods and are exclusively made
+                            up of <i>trivially relocatable</i> sub-members
+                        </li>
+                    </ol>
+                </p>
 
-<span style="color: #aaaaaa; font-style: italic">// now we can safely reuse t_buffer for 
-    other purposes or free it</span>
-free(t_buffer);
-</pre>
-            </div>
-            <br />
-            <p>
-                Notice that in contrast to when using <code>uninitialized_move</code>, it is
-                perfectly safe to repurpose the source buffer after or even free it.
-            </p>
+                <p>
+                    We can test for the first case using <code>std::is_trivially_copyable</code>.
+                    We can not cover the
+                    second case with today's C++. And in any case it would be a
+                    very limited solution. For example
+                    neither cases cover <code>std::vector</code>, which is
+                    trivially relocatable, but not trivially copyable
+                    and it has methods.
+                </p>
 
-            <p>
-                If <code>T</code> is a <i>trivially relocatable</i> type and the buffer is contiguous, then
-                <code>uninitialized_relocate_n</code> will simply
-                call <code>memcpy</code> once, or <code>n</code> times if the buffer is not contiguous. Otherwise it
-                will <code>move</code>+<code>destroy</code> on each object.
-            </p>
+                <p>
+                    To cover all cases, <a
+                        href="https://isocpp.org/files/papers/P1144R8.html">P1144</a>
+                    proposes that
+                    the user can declare that a type is trivially relocatable.
+                </p>
 
-            <p>
-                Incomplete support for structured bindings in the analyzer
-                was a common source of false positives. The goal of this
-                project was to introduce structured bindings to the
-                analyzer, and reduce the amount of false positive reports
-                while creating new opportunities to catch more bugs.
-            </p>
-
-            <h2>Approach</h2>
-
-            <p>
-                There are two main steps to implement relocation semantics. First, we need to
-                determine if a type is trivially relocatable. Second, we need to implement the
-                relocation mechanism. There is also a third step, which is specific to HPX,
-                and that is to implement the parallelized version of the procedure.
-            </p>
-
-            <h3>1) Detecting trivial relocatability</h3>
-
-            <p>
-                Most types are agnostic to relocation. For example, an <code>std::vector</code> object <b>is</b>
-                trivially relocatable, because it is just a wrapper around pointer to a buffer.
-
-            </p>
-            <div style="text-align: center;">
-                <img src="./img/vector_relocation_no_border.svg" width="85%" />
-            </div>
-            <br />
-            <p>
-                It is perfectly safe to <code>memcpy</code> an <code>std::vector</code> to a new location and
-                <code>std::free</code>
-                the old object. That is because:
-            </p>
-            <ul style="margin-top: -10px;">
-                <li>No destructor will be called and thus the buffer will stay intact</li>
-                <li>The new vector will take care of deallocating the buffer when it is destroyed</li>
-            </ul>
-            <p>
-                In contrast, an <code>std::string</code> <b>is not</b> trivially relocatable, since
-                it contains a pointer to an internal buffer that is used for small string optimization (sso).
-            </p>
-
-            <div style="text-align: center;">
-                <img src="./img/string_relocation_no_border.svg" width="85%" />
-            </div>
-            <br />
-            <p>
-                The copied object will point to the same buffer as the original, and when the original object is
-                <code>std::free</code>-ed, the copied object will be left with a dangling pointer.
-            </p>
-
-            <p>
-                Another example of a <b>non</b>-trivially relocatable type is <code>std::list</code>. It is a circularly
-                linked
-                list, so the last element points to the first.
-            </p>
-            <div style="text-align: center;">
-                <img src="./img/list_relocation_no_border.svg" width="85%" />
-            </div>
-            <br />
-            <p>
-                If we were to <code>memcpy</code> the list (the first node) to a new location, the last element would
-                still point to the old location, so after <code>free</code>-ing, that pointer would be dangling.
-            </p>
-
-            <p>
-                Unfortunately, there is no tell-tale sign that a type is trivially relocatable. But, there are ways to
-                cover many common cases:
-            <ol>
-                <li>types that are <i>trivially copyable</i>.</li>
-                <li>types that have no methods and are exclusively made up of <i>trivially relocatable</i> sub-members
-                </li>
-            </ol>
-            </p>
-
-            <p>
-                We can test for the first case using <code>std::is_trivially_copyable</code>. We can not cover the
-                second case with today's C++. And in any case it would be a very limited solution. For example
-                neither cases cover <code>std::vector</code>, which is trivially relocatable, but not trivially copyable
-                and it has methods.
-            </p>
-
-            <p>
-                To cover all cases, <a href="https://isocpp.org/files/papers/P1144R8.html">P1144</a> proposes that
-                the user can declare that a type is trivially relocatable.
-            </p>
-
-            <p>
-            </p>
-            <!-- This is
+                <p>
+                </p>
+                <!-- This is
                 equal to <code>std::is_trivially_copyable</code> by default and the user can specialize this trait for
-                their types. This was done <a
-                    href="https://github.com/STEllAR-GROUP/hpx/pull/6264/files#diff-4bb96e21b64e86fe4bab527449733bf3bf0e50b6bd9d900c6f1ea5c76599b166"
-                    target="_blank">here</a>, and this  
+                their types.  and this  
                 We achieved this is by introducing a new type trait, <code>hpx::is_trivially_relocatable</code>. The user interface we decided to use:
  -->
-            <p>
-                To achieve this, HPX offers the following interface:
-            </p>
-            <!-- HTML generated using hilite.me -->
-            <div
-                style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
-                <pre style="margin: 0; line-height: 125%">HPX_DECLARE_TRIVIALLY_RELOCATABLE(custom_type);</pre>
-            </div>
+                <p>
+                    To achieve this, HPX offers the following interface,
+                    implemented <a
+                        href="https://github.com/STEllAR-GROUP/hpx/pull/6264/files#diff-4bb96e21b64e86fe4bab527449733bf3bf0e50b6bd9d900c6f1ea5c76599b166"
+                        target="_blank">here</a>:
+                </p>
+                <!-- HTML generated using hilite.me -->
+                <div
+                    style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
+                    <pre style="margin: 0; line-height: 125%">HPX_DECLARE_TRIVIALLY_RELOCATABLE(custom_type);</pre>
+                </div>
 
-            <br />
-            Which expands to:
-            <br />
-            <br />
-            <!-- HTML generated using hilite.me -->
-            <div
-                style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
-                <pre style="margin: 0; line-height: 125%"><span style="font-weight: bold">namespace</span> hpx {                                                            
+                <br />
+                Which expands to:
+                <br />
+                <br />
+                <!-- HTML generated using hilite.me -->
+                <div
+                    style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
+                    <pre style="margin: 0; line-height: 125%"><span style="font-weight: bold">namespace</span> hpx {
     <span style="font-weight: bold">struct</span> is_trivially_relocatable&lt;custom_type&gt; : std::true_type
-    {                                                                      
-    };                                                                     
+    {
+    };
 }</pre>
-            </div>
-            <br />
+                </div>
+                <br />
 
-            <p>
-                Essentially the user is specializing <code>hpx::is_trivially_relocatable&lt;T&gt;</code> for their type.
-                This trait is <code>false</code> by default. unless the type is trivially copyable. That way we cover
-                the simple cases, but we also let the user benefit
-                from the optimization for their own types, provided they are sure that it is safe to do so.
-            </p>
+                <p>
+                    Essentially the user is specializing <code>hpx::is_trivially_relocatable&lt;T&gt;</code>
+                    for their type.
+                    For <i>trivially copyable</i> types this is <code>true</code>
+                    by default. Otherwise it is
+                    <code>false</code>.
+                    That way we automatically optimize for all the simple cases,
+                    but we also let the user benefit
+                    further with their own types.
+                </p>
 
-            <p>
-                Now, our algorithms can use <code>hpx::is_trivially_relocatable&lt;T&gt;</code> to test for trivial 
-                and safely apply the optimization.
-            </p>
+                <p>
+                    Now, our algorithms can test trivial relocatability using
+                    <code>hpx::is_trivially_relocatable&lt;T&gt;</code> and
+                    safely
+                    optimize the relocation.
+                </p>
 
+                <h3>2) Applying relocation</h3>
 
+                <p>
+                    Let <code>t_buffer</code> be a buffer of <code>n</code>
+                    objects of type <code>T</code>, and
+                    <code>t_buffer_new</code> be another buffer large enough to
+                    fit <code>m</code> &ge; <code>n</code>
+                    objects of type <code>T</code>.
+                </p>
 
-            <pre><code>struct S {
-    int x;
-    double y;
-};
+                <p>
+                    The desired state after the relocation is:
+                    <ol>
+                        <li><code>t_buffer_new</code> contains the objects
+                            originally in <code>t_buffer</code></li>
+                        <li><code>t_buffer</code> can be repurposed or freed
+                            without further cleanup</li>
+                    </ol>
+                </p>
 
-void fn() {
-    S s{1, 2.0};
+                <div style="text-align: center;">
+                    <img src="./img/relocation.svg" />
+                </div>
 
-    auto [a, b] = s;
-}
-</code></pre>
-            <p>
-                In this snippet <code>s</code> is copied first and
-                <code>a</code> and <code>b</code> refer to the data members
-                of the copy, in the same order as they are declared.
-                Identifier <code>a</code> corresponds to <code>x</code> and
-                <code>b</code> corresponds to <code>y</code> respectively.
-            </p>
+                <br />
 
-            <p>
-                The identifiers themselves are not variables, just names
-                referring to the members of the copy, so their evaluation
-                happens when they are used somewhere. For example:
-            </p>
+                <p>
+                    The traditional approach is to <code>move</code> each object
+                    from <code>t_buffer</code> to
+                    <code>t_buffer_new</code> and <code>destroy</code>
+                    the moved-from objects in <code>t_buffer</code>.
+                </p>
 
-            <pre><code>auto [a, b] = s;
-int fst = a;
-</code></pre>
-            <p>
-                When the the statement
-                <code>int fst = a;</code> is reached, the value of
-                <code>a</code> is the value of the first field,
-                <code>x</code> inside the copy of <code>s</code>, so all
-                that's left to do is telling the analyzer to look that value
-                up and assign it to <code>fst</code>.
-            </p>
+                <div style="text-align: center;">
+                    <img src="./img/traditional_relocation.svg" />
+                </div>
 
-            <p>
-                Initially the analyzer was able to create a copy of the
-                struct, so the only work to be done was implementing how to
-                look the required value up.
-            </p>
+                <p>
+                    This amounts to <b>n</b> calls to <code>T(T&&)</code> and <b>n</b>
+                    calls to <code>~T()</code>. Depending
+                    on the type, these operations can be
+                    expensive. For example, <samp>clang</samp>'s <code>std::vector</code>
+                    will set the <code>data</code>
+                    pointer of the moved-from object to <code>nullptr</code>
+                    and the <code>size</code> and <code>capacity</code> to <code>0</code>.
+                </p>
 
-            <p>
-                The final step of this case was to handle when data members
-                are bound by reference. In this case the initializer is not
-                copied and the identifiers are references to the data
-                members of the original initializer.
-            </p>
+                <p>
+                    But since we know that <code>std::vector</code> is a
+                    trivially relocatable type, we can do better.
+                </p>
 
-            <pre><code>S s{1, 2.0};
+                <div style="text-align: center;">
+                    <img src="./img/p1144_relocation.svg" />
+                </div>
+                <br />
+                <p>
+                    We can simply <code>memcpy</code> the entire buffer
+                    from <code>t_buffer</code> to <code>t_buffer_new</code>.
+                    This amounts to a single call to
+                    <code>memcpy</code>.
+                </p>
+                <p>
+                    To achieve the first goal, we need to <code>move</code> the
+                    objects from the <i>source</i> buffer to the
+                    <i>destination</i> buffer.
+                    For the second goal, we need to <code>destroy</code> the
+                    moved-from objects in the <i>source</i> buffer.
+                </p>
 
-auto &[x1, y1] = s;
-auto &&[x2, y2] = s;
-</code></pre>
-            <p>
-                Inside the analyzer there's no need to differentiate between
-                binding by
-                <code>&amp;</code> (lvalue reference) and
-                <code>&amp;&amp;</code> (rvalue reference). In both cases
-                it's enough to look up the specific value from the original
-                object.
-            </p>
+                <p>
+                    When a tuple-like type is bound by reference, the
+                    initializer is not copied, but the variables are still
+                    created for each identifier and in this case they are
+                    reference types.
+                </p>
 
-            <h3>Case 2: binding a tuple-like type</h3>
+                <!-- HTML generated using hilite.me -->
+                <div
+                    style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
+                    <pre style="margin: 0; line-height: 125%" wrap="true">
+uninitialized_relocate_n(t_buffer, n, t_buffer_new);
+</pre>
+                </div>
 
-            <p>
-                Binding a tuple-like type by value is similar to data
-                members in terms of the tuple-like type is first copied.
-                After that instead of treating each identifier as an alias
-                to the corresponding member of the copy, a new variable is
-                created for each of them, which has the same type and value
-                as it's respective member.
-            </p>
-            <pre><code>std::pair&lt;int, char&gt; p{1, 'a'};
-                    
-auto [a, b] = p;
-</code></pre>
+                <p>
+                    In both cases the new variables are lvalue reference types,
+                    so both <code>a1</code> and <code>a2</code> have the type of
+                    <code>int &</code> and <code>b1</code> and
+                    <code>b2</code> have the type of <code>char &</code>. Also
+                    these variables are references to the elements of
+                    <code>p</code>.
+                </p>
 
-            <p>
-                The snippet above can be viewed as if there are 2 variable
-                declarations,
-                <code>int a = 1;</code> and <code>char b = 'a';</code>.
-            </p>
+                <h3>Case 3: binding an array</h3>
+                <p>
+                    Binding an array by value works like binding data members by
+                    value. First the array is copied, and the identifiers refer
+                    to the values of the corresponding elements of the copy.
+                </p>
+                <pre><samp>int arr[] = {1, 2, 3};
 
-            <p>
-                The idea here is to replicate this behaviour, and after the
-                object has been copied, create a new variable for each
-                identifier, and initialize them with the proper values from
-                the copy. The variable creation is driven by the
-                <a href="https://clang.llvm.org/docs/DataFlowAnalysisIntro.html" target="_blank">Control Flow
-                    Graph</a>,
-                so the analyzer
-                needed to be modified so that when it
-                sees a structured binding declaration to a tuple-like type
-                during CFG construction, it also creates a new variable
-                declaration for each identifier in the CFG.
-            </p>
+auto [x, y, z] = arr;</samp></pre>
 
-            <p>
-                When a tuple-like type is bound by reference, the
-                initializer is not copied, but the variables are still
-                created for each identifier and in this case they are
-                reference types.
-            </p>
-
-            <pre><code>std::pair&lt;int, char&gt; p{1, 'a'};
-                    
-auto &[a1, b1] = p;
-auto &&[a2, b2] = p;
-</code></pre>
-
-            <p>
-                In both cases the new variables are lvalue reference types,
-                so both <code>a1</code> and <code>a2</code> have the type of
-                <code>int &</code> and <code>b1</code> and
-                <code>b2</code> have the type of <code>char &</code>. Also
-                these variables are references to the elements of
-                <code>p</code>.
-            </p>
-
-            <h3>Case 3: binding an array</h3>
-            <p>
-                Binding an array by value works like binding data members by
-                value. First the array is copied, and the identifiers refer
-                to the values of the corresponding elements of the copy.
-            </p>
-            <pre><code>int arr[] = {1, 2, 3};
-
-auto [x, y, z] = arr;
-</code></pre>
-
-            <p>
-                In the snippet above <code>arr</code> is copied and the
-                identifiers (<code>x</code>, <code>y</code>, <code>z</code>)
-                refer to the elements of the copy. The copy of the array is
-                created by an
-                <code>
+                <p>
+                    In the snippet above <code>arr</code> is copied and the
+                    identifiers (<code>x</code>, <code>y</code>, <code>z</code>)
+                    refer to the elements of the copy. The copy of the array is
+                    created by an
+                    <code>
                         <a
                             href="https://clang.llvm.org/doxygen/classclang_1_1ArrayInitLoopExpr.html"
                             target="_blank">ArrayInitLoopExpr</a></code>, which
-                is also responsible for creating a copy in an
-                implicit copy/move constructor of a class with an array
-                member and when a lambda captures an array by value. This
-                means that handling the mentioned expression can provide
-                more information to the analyzer about aggregate types and
-                lambdas.
-            </p>
+                    is also responsible for creating a copy in an
+                    implicit copy/move constructor of a class with an array
+                    member and when a lambda captures an array by value. This
+                    means that handling the mentioned expression can provide
+                    more information to the analyzer about aggregate types and
+                    lambdas.
+                </p>
 
-            <p>
-                The idea is to copy the array with as little overhead as
-                possible, so for POD arrays the desired approach is to
-                create a
-                <code><a
+                <p>
+                    The idea is to copy the array with as little overhead as
+                    possible, so for POD arrays the desired approach is to
+                    create a
+                    <code><a
                             href="https://clang.llvm.org/docs/analyzer/developer-docs/RegionStore.html#lazy-bindings-lazycompoundval"
                             target="_blank">LazyCompoundVal</a></code>, which
-                basically means that the analyzer associates the
-                new array with a snapshot of the old one, instead of
-                creating a memberwise copy.
-            </p>
+                    basically means that the analyzer associates the
+                    new array with a snapshot of the old one, instead of
+                    creating a memberwise copy.
+                </p>
 
-            <p>
-                While it is the desired approach for POD arrays, it is
-                inaccurate for non-POD ones, because the copy constructor
-                can have side effects. For example take a look at this
-                snippet:
-            </p>
+                <p>
+                    While it is the desired approach for POD arrays, it is
+                    inaccurate for non-POD ones, because the copy constructor
+                    can have side effects. For example take a look at this
+                    snippet:
+                </p>
 
-            <pre><code>struct S {
+                <pre><code>struct S {
     inline static int c = 0;
     int i;
                   
@@ -412,88 +401,93 @@ void fn() {
 }
 </code></pre>
 
-            <p>
-                The copy constructor of <code>S</code> has a side effect,
-                which means it must be evaluated for every element to get an
-                accurate result.
-            </p>
+                <p>
+                    The copy constructor of <code>S</code> has a side effect,
+                    which means it must be evaluated for every element to get an
+                    accurate result.
+                </p>
 
-            <p>
-                Initially the analyzer wasn't able to model non-POD arrays,
-                so before it could start evaluating structured bindings to
-                such arrays, it needed to be taught how to create and
-                destroy them.
-            </p>
+                <p>
+                    Initially the analyzer wasn't able to model non-POD arrays,
+                    so before it could start evaluating structured bindings to
+                    such arrays, it needed to be taught how to create and
+                    destroy them.
+                </p>
 
-            <p>
-                The idea is the same for both creating the array and
-                creating a copy of it. The analyzer should call the
-                constructor/copy constructor for each of the elements in
-                order, and construct each element into the specific target
-                memory region. Later when the lifetime of the array ends,
-                the destructors also need to be invoked, but in a reverse
-                order. The destructor of the last element is invoked first.
-            </p>
+                <p>
+                    The idea is the same for both creating the array and
+                    creating a copy of it. The analyzer should call the
+                    constructor/copy constructor for each of the elements in
+                    order, and construct each element into the specific target
+                    memory region. Later when the lifetime of the array ends,
+                    the destructors also need to be invoked, but in a reverse
+                    order. The destructor of the last element is invoked first.
+                </p>
 
-            <p>
-                Binding by reference works the same way as in case of data
-                members. The array is not copied and the identifiers are
-                references to the elements in the original array.
-            </p>
+                <p>
+                    Binding by reference works the same way as in case of data
+                    members. The array is not copied and the identifiers are
+                    references to the elements in the original array.
+                </p>
 
-            <h2>Implementation</h2>
+                <h2>Implementation</h2>
 
-            <ul>
-                <li>
-                    <a href="https://reviews.llvm.org/D127993" target="_blank">D127993</a>
-                    was the first patch applied to the analyzer and it put
-                    the initializer of the structured binding into the
-                    Control Flow Graph. Because the initializer was missing
-                    from the CFG, in some cases it had already been removed
-                    from the analyzer's internal state, before it even
-                    reached the structured binding declaration. As a result
-                    the analyzer had no information about what object were
-                    the identifiers being bound to.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D128064" target="_blank">
-                        D128064
-                    </a>
-                    introduced a "Small array binding policy" to the
-                    analyzer, which is similar to the already existing
-                    "Small struct binding policy". As a result if a
-                    <code>LazyCompoundVal</code> of a sufficiently small
-                    (smaller than 5 elements) array is about to be created,
-                    a by value copy is created instead. This allows the
-                    analyzer to produce more accurate warning messages.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D127643" target="_blank">
-                        D127643
-                    </a>
-                    is a simple patch allowing the analyzer to handle
-                    structured bindings to data members. It tells the
-                    analyzer where to look up a required values.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D126613" target="_blank">D126613</a>
-                    implemented <code>ArrayInitLoopExpr</code> and
-                    structured bindings to POD arrays.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D128716" target="_blank">
-                        D128716
-                    </a>
-                    fixed a bug when an identifier introduced to a reference
-                    type was treated as if it was a non-reference type. An
-                    example snippet that helps understanding the bug:
+                <ul>
+                    <li>
+                        <a href="https://reviews.llvm.org/D127993"
+                            target="_blank">D127993</a>
+                        was the first patch applied to the analyzer and it put
+                        the initializer of the structured binding into the
+                        Control Flow Graph. Because the initializer was missing
+                        from the CFG, in some cases it had already been removed
+                        from the analyzer's internal state, before it even
+                        reached the structured binding declaration. As a result
+                        the analyzer had no information about what object were
+                        the identifiers being bound to.
+                    </li>
                     <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D128064"
+                            target="_blank">
+                            D128064
+                        </a>
+                        introduced a "Small array binding policy" to the
+                        analyzer, which is similar to the already existing
+                        "Small struct binding policy". As a result if a
+                        <code>LazyCompoundVal</code> of a sufficiently small
+                        (smaller than 5 elements) array is about to be created,
+                        a by value copy is created instead. This allows the
+                        analyzer to produce more accurate warning messages.
+                    </li>
                     <br />
-                    <pre><code>struct S { int &amp;x; };
+                    <li>
+                        <a href="https://reviews.llvm.org/D127643"
+                            target="_blank">
+                            D127643
+                        </a>
+                        is a simple patch allowing the analyzer to handle
+                        structured bindings to data members. It tells the
+                        analyzer where to look up a required values.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D126613"
+                            target="_blank">D126613</a>
+                        implemented <code>ArrayInitLoopExpr</code> and
+                        structured bindings to POD arrays.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D128716"
+                            target="_blank">
+                            D128716
+                        </a>
+                        fixed a bug when an identifier introduced to a reference
+                        type was treated as if it was a non-reference type. An
+                        example snippet that helps understanding the bug:
+                        <br />
+                        <br />
+                        <pre><code>struct S { int &amp;x; };
 
 void fn() {
     int i = 1;
@@ -501,301 +495,327 @@ void fn() {
 
     auto [a] = s;
 }</code></pre>
-                    Here the type of <code>a</code> is <code>int &</code>,
-                    however it was treated as <code>int</code>, which lead
-                    to false positives.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D127973" target="_blank">
-                        D127973
-                    </a>
-                    made it possible to evaluate the constructor of each
-                    element in a non-POD array of less than or equal to 4
-                    elements. The analyzer allows the same statement to be
-                    repeated 4 times by default, hence the 4 element limit.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D129496" target="_blank">
-                        D129496
-                    </a>
-                    applied the ideas of the previous patch to
-                    <code>ArrayInitLoopExpr</code>, and made it possible to
-                    create structured bindings to small non-POD arrays as
-                    well as to evaluate implicit copy and move constructors
-                    of classes/structs with non-POD array fields properly.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D129967" target="_blank">
-                        D129967
-                    </a>
-                    has been extracted from the previous patch and
-                    introduced a new
-                    <code>
+                        Here the type of <code>a</code> is <code>int &</code>,
+                        however it was treated as <code>int</code>, which lead
+                        to false positives.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D127973"
+                            target="_blank">
+                            D127973
+                        </a>
+                        made it possible to evaluate the constructor of each
+                        element in a non-POD array of less than or equal to 4
+                        elements. The analyzer allows the same statement to be
+                        repeated 4 times by default, hence the 4 element limit.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D129496"
+                            target="_blank">
+                            D129496
+                        </a>
+                        applied the ideas of the previous patch to
+                        <code>ArrayInitLoopExpr</code>, and made it possible to
+                        create structured bindings to small non-POD arrays as
+                        well as to evaluate implicit copy and move constructors
+                        of classes/structs with non-POD array fields properly.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D129967"
+                            target="_blank">
+                            D129967
+                        </a>
+                        has been extracted from the previous patch and
+                        introduced a new
+                        <code>
                             <a
                                 href="https://clang.llvm.org/doxygen/classclang_1_1ConstructionContext.html"
                                 target="_blank">
                                 ConstructionContext</a></code>
-                    for lambda captures, and introduced capturing non-POD
-                    arrays in lambdas by value.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D128837" target="_blank">
-                        D128837
-                    </a>
-                    introduced structured bindings to tuple-like types. It
-                    modified the CFG and the
-                    <a href="https://discourse.llvm.org/t/analyzer-an-in-depth-look-at-liveness-analysis-in-the-static-analyzer/56008"
-                        target="_blank">Liveness Analysis</a>
-                    so that a new variable is created for each identifier,
-                    and it's lifetime is properly managed.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131784" target="_blank">
-                        D131784
-                    </a>
-                    fixed an issue introduced by
-                    <a href="https://reviews.llvm.org/D129967" target="_blank">
-                        D129967 </a>, which lead to a crash on copy elided
-                    initialized
-                    lambda captures. E.g.:
-                    <code>[var = S()](){};</code> compiled with
-                    <code>-std=c++17</code> or higher.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131944" target="_blank">
-                        D131944
-                    </a>
-                    removed pattern matching for lambda capture initializers
-                    completely as they were hard to maintain and caused
-                    crashes.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131840" target="_blank">
-                        D131840
-                    </a>
-                    introduced a solution for handling multidimensional
-                    non-POD arrays in <code>ArrayInitLoopExpr</code>, so the
-                    analyzer can properly model when such arrays are used in
-                    structured bindings, lambda captures and implicit
-                    copy/move constructors.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D130737" target="_blank">
-                        D130737
-                    </a>
-                    introduced non-POD array destruction to the analyzer, so
-                    now it's possible to properly reason about non-POD
-                    arrays when they're small enough. Before this patch the
-                    analyzer could reason about non-POD array construction,
-                    but still failed to evaluate their destruction.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131501" target="_blank">
-                        D131501
-                    </a>
-                    introduced special handling for 0 length arrays, which
-                    are basically no-ops, so no machine code is generated
-                    for them. Before this patch they were treated by the
-                    analyzer as if they had 1 element, which could lead to
-                    false positives by invoking the constructor and
-                    destructor once.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131187" target="_blank">
-                        D131187
-                    </a>
-                    added all the temporary data used to evaluate non-POD
-                    array construction and destruction to the
-                    <a href="https://llvm.org/devmtg/2019-10/slides/Dergachev-DevelopingTheClangStaticAnalyzer.pdf"
-                        target="_blank">Exploded Graph</a>
-                    to make it easier to track which element is being
-                    constructed or destructed at a specific point.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131262" target="_blank">
-                        D131262
-                    </a>
-                    increased the accuracy of the bug reports. With this
-                    patch the bug reporter can keep tracking a specific
-                    region even if it encounters a trivial copy/move
-                    construction. This patch also improved tracking values
-                    inside initializer lists a bit.
-                </li>
-            </ul>
-            <h3>Additional patches</h3>
-            <ul>
-                <li>
-                    <a href="https://reviews.llvm.org/D132654" target="_blank">
-                        D132654
-                    </a>
-                    fixed a false positive warning in a
-                    <a href="https://clang.llvm.org/extra/clang-tidy/" target="_blank">clang-tidy</a>
-                    checker that was reported when an array was used as the
-                    initializer of a structured binding or was captured in a
-                    lambda by value.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131299" target="_blank">
-                        D131299
-                    </a>
-                    created a new analyzer
-                    <a href="https://clang.llvm.org/docs/analyzer/checkers.html#core-uninitialized-newarraysize-c"
-                        target="_blank">checker</a>
-                    that warns if the expression used to determine the
-                    number of elements inside <code>new[]</code> evaluates
-                    to a garbage value.
-                </li>
-            </ul>
+                        for lambda captures, and introduced capturing non-POD
+                        arrays in lambdas by value.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D128837"
+                            target="_blank">
+                            D128837
+                        </a>
+                        introduced structured bindings to tuple-like types. It
+                        modified the CFG and the
+                        <a
+                            href="https://discourse.llvm.org/t/analyzer-an-in-depth-look-at-liveness-analysis-in-the-static-analyzer/56008"
+                            target="_blank">Liveness Analysis</a>
+                        so that a new variable is created for each identifier,
+                        and it's lifetime is properly managed.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D131784"
+                            target="_blank">
+                            D131784
+                        </a>
+                        fixed an issue introduced by
+                        <a href="https://reviews.llvm.org/D129967"
+                            target="_blank">
+                            D129967 </a>, which lead to a crash on copy elided
+                        initialized
+                        lambda captures. E.g.:
+                        <code>[var = S()](){};</code> compiled with
+                        <code>-std=c++17</code> or higher.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D131944"
+                            target="_blank">
+                            D131944
+                        </a>
+                        removed pattern matching for lambda capture initializers
+                        completely as they were hard to maintain and caused
+                        crashes.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D131840"
+                            target="_blank">
+                            D131840
+                        </a>
+                        introduced a solution for handling multidimensional
+                        non-POD arrays in <code>ArrayInitLoopExpr</code>, so the
+                        analyzer can properly model when such arrays are used in
+                        structured bindings, lambda captures and implicit
+                        copy/move constructors.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D130737"
+                            target="_blank">
+                            D130737
+                        </a>
+                        introduced non-POD array destruction to the analyzer, so
+                        now it's possible to properly reason about non-POD
+                        arrays when they're small enough. Before this patch the
+                        analyzer could reason about non-POD array construction,
+                        but still failed to evaluate their destruction.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D131501"
+                            target="_blank">
+                            D131501
+                        </a>
+                        introduced special handling for 0 length arrays, which
+                        are basically no-ops, so no machine code is generated
+                        for them. Before this patch they were treated by the
+                        analyzer as if they had 1 element, which could lead to
+                        false positives by invoking the constructor and
+                        destructor once.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D131187"
+                            target="_blank">
+                            D131187
+                        </a>
+                        added all the temporary data used to evaluate non-POD
+                        array construction and destruction to the
+                        <a
+                            href="https://llvm.org/devmtg/2019-10/slides/Dergachev-DevelopingTheClangStaticAnalyzer.pdf"
+                            target="_blank">Exploded Graph</a>
+                        to make it easier to track which element is being
+                        constructed or destructed at a specific point.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D131262"
+                            target="_blank">
+                            D131262
+                        </a>
+                        increased the accuracy of the bug reports. With this
+                        patch the bug reporter can keep tracking a specific
+                        region even if it encounters a trivial copy/move
+                        construction. This patch also improved tracking values
+                        inside initializer lists a bit.
+                    </li>
+                </ul>
+                <h3>Additional patches</h3>
+                <ul>
+                    <li>
+                        <a href="https://reviews.llvm.org/D132654"
+                            target="_blank">
+                            D132654
+                        </a>
+                        fixed a false positive warning in a
+                        <a href="https://clang.llvm.org/extra/clang-tidy/"
+                            target="_blank">clang-tidy</a>
+                        checker that was reported when an array was used as the
+                        initializer of a structured binding or was captured in a
+                        lambda by value.
+                    </li>
+                    <br />
+                    <li>
+                        <a href="https://reviews.llvm.org/D131299"
+                            target="_blank">
+                            D131299
+                        </a>
+                        created a new analyzer
+                        <a
+                            href="https://clang.llvm.org/docs/analyzer/checkers.html#core-uninitialized-newarraysize-c"
+                            target="_blank">checker</a>
+                        that warns if the expression used to determine the
+                        number of elements inside <code>new[]</code> evaluates
+                        to a garbage value.
+                    </li>
+                </ul>
 
-            <h2>Results</h2>
-            <p>
-                Structured bindings are a C++17 addition, so testing the
-                changes required projects written in C++17 or above. Finding
-                sufficiently large projects with extensive structured
-                binding usage was quite challenging, since the majority of
-                large open-source C++ projects are written in C++14 or
-                below.
-            </p>
-            <p>
-                Most of the testing was done on
-                <a href="https://github.com/EQMG/Acid" target="_blank">Acid</a>
-                and
-                <a href="https://github.com/WebKit/WebKit" target="_blank">WebKit</a>
-                and their dependencies, including
-                <a href="https://github.com/bulletphysics/bullet3" target="_blank">Bullet</a>,
-                <a href="https://github.com/KhronosGroup/glslang" target="_blank">Glslang</a>
-                and
-                <a href="https://github.com/glfw/glfw" target="_blank">GLFW</a>.
-                On top that, the changes have also been evaluated on
-                several C++14 or earlier open-source projects, including
-                <a href="https://github.com/qt/qtbase" target="_blank">Qt</a>,
-                <a href="https://github.com/sqlite/sqlite" target="_blank">SQLite</a>
-                and
-                <a href="https://github.com/llvm/llvm-project" target="_blank">LLVM</a>
-                itself.
-            </p>
+                <h2>Results</h2>
+                <p>
+                    Structured bindings are a C++17 addition, so testing the
+                    changes required projects written in C++17 or above. Finding
+                    sufficiently large projects with extensive structured
+                    binding usage was quite challenging, since the majority of
+                    large open-source C++ projects are written in C++14 or
+                    below.
+                </p>
+                <p>
+                    Most of the testing was done on
+                    <a href="https://github.com/EQMG/Acid" target="_blank">Acid</a>
+                    and
+                    <a href="https://github.com/WebKit/WebKit" target="_blank">WebKit</a>
+                    and their dependencies, including
+                    <a href="https://github.com/bulletphysics/bullet3"
+                        target="_blank">Bullet</a>,
+                    <a href="https://github.com/KhronosGroup/glslang"
+                        target="_blank">Glslang</a>
+                    and
+                    <a href="https://github.com/glfw/glfw" target="_blank">GLFW</a>.
+                    On top that, the changes have also been evaluated on
+                    several C++14 or earlier open-source projects, including
+                    <a href="https://github.com/qt/qtbase" target="_blank">Qt</a>,
+                    <a href="https://github.com/sqlite/sqlite" target="_blank">SQLite</a>
+                    and
+                    <a href="https://github.com/llvm/llvm-project"
+                        target="_blank">LLVM</a>
+                    itself.
+                </p>
 
-            <p>
-                Both the coverage and the accuracy of the analysis have been
-                improved. On WebKit 81 false positives have been replaced by
-                22 true positives and
-                <a href="https://github.com/llvm/llvm-project/issues/42387" target="_blank">Issue #42387</a>
-                has been resolved too.
-            </p>
+                <p>
+                    Both the coverage and the accuracy of the analysis have been
+                    improved. On WebKit 81 false positives have been replaced by
+                    22 true positives and
+                    <a href="https://github.com/llvm/llvm-project/issues/42387"
+                        target="_blank">Issue #42387</a>
+                    has been resolved too.
+                </p>
 
-            <h2>Future work</h2>
+                <h2>Future work</h2>
 
-            <p>
-                There are several improvements that could increase the
-                accuracy and coverage of the analysis. Most of them are not
-                structured binding specific, but are strongly connected to
-                the implementations used to teach the analyzer about
-                structured bindings.
-            </p>
+                <p>
+                    There are several improvements that could increase the
+                    accuracy and coverage of the analysis. Most of them are not
+                    structured binding specific, but are strongly connected to
+                    the implementations used to teach the analyzer about
+                    structured bindings.
+                </p>
 
-            <ul>
-                <li>
-                    Currently the analyzer can only reason about known
-                    values inside a <code>LazyCompoundVal</code>. It can't
-                    tell the difference between <code>Unknown</code> and
-                    <code>Undefined</code> values. This sometimes leads to
-                    false negatives, so an uninitialized assignment might
-                    not be detected. Modifying the analyzer so that it can
-                    decide what such values are could increase the accuracy
-                    of the analysis.
-                </li>
-                <br />
-                <li>
-                    Detecting whether a constructor/destructor has side
-                    effects could also increase the accuracy of the
-                    analysis. For example the
-                    <a href="https://clang.llvm.org/docs/analyzer/checkers.html#deadcode" target="_blank">Dead Code
-                        Checker</a>
-                    relies on such information, and because it's not
-                    provided with that, it can't detect when a non-POD
-                    variable is unused. Also if the analyzer knew if there
-                    are no side effects, invoking the constructor for every
-                    element in a non-POD array could also be avoided.
-                </li>
-                <br />
-                <li>
-                    Analysis of non-POD
-                    <a href="https://en.cppreference.com/w/c/language/array#Variable-length_arrays"
-                        target="_blank">variable-length arrays</a>.
-                    Currently the analyzer only handles arrays if their
-                    element count is known at compile time.
-                </li>
-                <br />
-                <li>
-                    Creating a new <code>ConstructionContext</code> for
-                    lambdas. Currently lambdas are constructed into a
-                    temporary memory region from which they are moved to
-                    their final region. A
-                    <code>ConstructionContext</code> would allow the
-                    analyzer to construct the lambdas directly into their
-                    final regions, so the temporary construction could be
-                    avoided.
-                </li>
-            </ul>
+                <ul>
+                    <li>
+                        Currently the analyzer can only reason about known
+                        values inside a <code>LazyCompoundVal</code>. It can't
+                        tell the difference between <code>Unknown</code> and
+                        <code>Undefined</code> values. This sometimes leads to
+                        false negatives, so an uninitialized assignment might
+                        not be detected. Modifying the analyzer so that it can
+                        decide what such values are could increase the accuracy
+                        of the analysis.
+                    </li>
+                    <br />
+                    <li>
+                        Detecting whether a constructor/destructor has side
+                        effects could also increase the accuracy of the
+                        analysis. For example the
+                        <a
+                            href="https://clang.llvm.org/docs/analyzer/checkers.html#deadcode"
+                            target="_blank">Dead Code
+                            Checker</a>
+                        relies on such information, and because it's not
+                        provided with that, it can't detect when a non-POD
+                        variable is unused. Also if the analyzer knew if there
+                        are no side effects, invoking the constructor for every
+                        element in a non-POD array could also be avoided.
+                    </li>
+                    <br />
+                    <li>
+                        Analysis of non-POD
+                        <a
+                            href="https://en.cppreference.com/w/c/language/array#Variable-length_arrays"
+                            target="_blank">variable-length arrays</a>.
+                        Currently the analyzer only handles arrays if their
+                        element count is known at compile time.
+                    </li>
+                    <br />
+                    <li>
+                        Creating a new <code>ConstructionContext</code> for
+                        lambdas. Currently lambdas are constructed into a
+                        temporary memory region from which they are moved to
+                        their final region. A
+                        <code>ConstructionContext</code> would allow the
+                        analyzer to construct the lambdas directly into their
+                        final regions, so the temporary construction could be
+                        avoided.
+                    </li>
+                </ul>
 
-            <h2>Special thanks</h2>
+                <h2>Special thanks</h2>
 
-            <p>
-                I'd like to thank
-                <a href="https://github.com/haoNoQ" target="_blank">Artem
-                    Dergachev</a>,
-                <a href="https://github.com/xazax-hun" target="_blank">Gábor
-                    Horváth</a>,
-                <a href="https://github.com/Szelethus" target="_blank">Kristóf
-                    Umann</a>
-                and
-                <a href="https://github.com/t-rasmud" target="_blank">Rashmi
-                    Mudduluru</a>
-                for mentoring the project, helping with testing the various
-                patches on a couple of open-source projects and answering my
-                questions even during the weekends.
-                <br />
-                <br />
-                I'd also like to thank
-                <a href="https://github.com/usama54321" target="_blank">Usama
-                    Hameed</a>,
-                <a href="https://github.com/ziqingluo-90" target="_blank">Ziqing
-                    Luo</a>
-                and
-                <a href="https://github.com/malavikasamak" target="_blank">Malavika
-                    Samak</a>
-                for being part our weekly discussions, as well as
-                <a href="https://github.com/steakhal" target="_blank">Balázs
-                    Benics</a>
-                and
-                <a href="https://github.com/martong" target="_blank">Gábor
-                    Márton</a>
-                for code reviews and ideas about how the new features could
-                be improved.
-            </p>
-        </section>
-        <footer>
-            <p>
-                <small>Hosted on GitHub Pages &mdash; Theme by
-                    <a href="https://github.com/orderedlist" target="_blank">orderedlist</a><br />
-                    Article template by <a href="https://isuckatcs.github.io/gsoc2022/"
-                        target="_blank">isuckatcs</a></small>
-            </p>
-        </footer>
-    </div>
-    <script src="javascripts/scale.fix.js"></script>
-</body>
+                <p>
+                    I'd like to thank
+                    <a href="https://github.com/haoNoQ" target="_blank">Artem
+                        Dergachev</a>,
+                    <a href="https://github.com/xazax-hun" target="_blank">Gábor
+                        Horváth</a>,
+                    <a href="https://github.com/Szelethus" target="_blank">Kristóf
+                        Umann</a>
+                    and
+                    <a href="https://github.com/t-rasmud" target="_blank">Rashmi
+                        Mudduluru</a>
+                    for mentoring the project, helping with testing the various
+                    patches on a couple of open-source projects and answering my
+                    questions even during the weekends.
+                    <br />
+                    <br />
+                    I'd also like to thank
+                    <a href="https://github.com/usama54321" target="_blank">Usama
+                        Hameed</a>,
+                    <a href="https://github.com/ziqingluo-90" target="_blank">Ziqing
+                        Luo</a>
+                    and
+                    <a href="https://github.com/malavikasamak" target="_blank">Malavika
+                        Samak</a>
+                    for being part our weekly discussions, as well as
+                    <a href="https://github.com/steakhal" target="_blank">Balázs
+                        Benics</a>
+                    and
+                    <a href="https://github.com/martong" target="_blank">Gábor
+                        Márton</a>
+                    for code reviews and ideas about how the new features could
+                    be improved.
+                </p>
+            </section>
+            <footer>
+                <p>
+                    <small>Hosted on GitHub Pages &mdash; Theme by
+                        <a href="https://github.com/orderedlist" target="_blank">orderedlist</a><br />
+                        Article template by <a
+                            href="https://isuckatcs.github.io/gsoc2022/"
+                            target="_blank">isuckatcs</a></small>
+                </p>
+            </footer>
+        </div>
+        <script src="javascripts/scale.fix.js"></script>
+    </body>
 
 </html>
