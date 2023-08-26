@@ -55,8 +55,9 @@ a:hover small {
 }
 
 .wrapper {
-  width:1070px;
-  margin: 0 auto;
+  width:1110px;
+  /* width:80%; */
+  margin:0 auto;
 }
 
 blockquote {
@@ -185,7 +186,8 @@ header ul a strong {
 }
 
 section {
-  width:700px;
+  width:750px;
+  /* width:80%; */
   float:right;
   padding-bottom:50px;
 }
@@ -209,7 +211,8 @@ footer {
   -webkit-font-smoothing:subpixel-antialiased;
 }
 
-@media print, screen and (max-width: 1060px) {
+@media print, screen and (max-width: 960px) {
+
   div.wrapper {
     width:auto;
     margin:0;

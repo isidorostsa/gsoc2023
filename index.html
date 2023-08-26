@@ -70,9 +70,8 @@
                     algorithm will determine if it is valid to reduce multiple
                     move-constructor and destructor calls to a
                     single <code>memcpy()</code>. This improvement impacts key
-                    primitives like
-                    <code>vector.reserve()</code>,
-                    leading to speedup in higher-level programs.
+                    primitives like <code>vector.reserve()</code>, leading to 
+                    speedup in higher-level programs.
                     <br />
                 </p>
                 <p>
@@ -82,14 +81,6 @@
                     call <code>memcpy</code> once, or <code>n</code> times if
                     the buffer is not contiguous. Otherwise it
                     will <code>move</code>+<code>destroy</code> on each object.
-                </p>
-
-                <p>
-                    Incomplete support for structured bindings in the analyzer
-                    was a common source of false positives. The goal of this
-                    project was to introduce structured bindings to the
-                    analyzer, and reduce the amount of false positive reports
-                    while creating new opportunities to catch more bugs.
                 </p>
 
                 <h2>Approach</h2>
