@@ -240,13 +240,11 @@
                 </p>
 
                 <p>
-                    Now, our algorithms can test trivial relocatability using
-                    <code>hpx::is_trivially_relocatable&lt;T&gt;</code> and
-                    safely
-                    optimize the relocation.
+                    Using <code>hpx::is_trivially_relocatable&lt;T&gt;</code> our algorithms can test 
+                    for trivial relocatability to optimize the relocation.
                 </p>
 
-                <h3>2) Applying relocation</h3>
+                <h3>2&rpar; Applying relocation</h3>
 
                 <p>
                     Let <code>t_buffer</code> be a buffer of <code>n</code>
@@ -267,7 +265,7 @@
                 </p>
 
                 <div style="text-align: center;">
-                    <img src="./img/relocation.svg" />
+                    <img src="./img/relocation.svg" width="85%"/>
                 </div>
 
                 <br />
@@ -280,8 +278,10 @@
                 </p>
 
                 <div style="text-align: center;">
-                    <img src="./img/traditional_relocation.svg" />
+                    <img src="./img/traditional_relocation.svg" width="55%"/>
                 </div>
+                
+                <br />
 
                 <p>
                     This amounts to <b>n</b> calls to <code>T(T&&)</code> and <b>n</b>
@@ -299,24 +299,20 @@
                 </p>
 
                 <div style="text-align: center;">
-                    <img src="./img/p1144_relocation.svg" />
+                    <img src="./img/p1144_relocation.svg" width="55%"/>
                 </div>
                 <br />
                 <p>
-                    We can simply <code>memcpy</code> the entire buffer
+                    We can simply bitwise-copy the entire buffer
                     from <code>t_buffer</code> to <code>t_buffer_new</code>.
-                    This amounts to a single call to
-                    <code>memcpy</code>.
-                </p>
-                <p>
-                    To achieve the first goal, we need to <code>move</code> the
-                    objects from the <i>source</i> buffer to the
-                    <i>destination</i> buffer.
-                    For the second goal, we need to <code>destroy</code> the
-                    moved-from objects in the <i>source</i> buffer.
+                    This amounts to a single call to <code>memcpy</code> for
+                    <code>n*sizeof(T)</code> bytes.
                 </p>
 
                 <p>
+                    
+                </p>
+                   <p>
                     When a tuple-like type is bound by reference, the
                     initializer is not copied, but the variables are still
                     created for each identifier and in this case they are
