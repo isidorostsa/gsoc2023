@@ -11,12 +11,12 @@
     <link rel="icon" href="./favicon.ico" />
     <link rel="stylesheet" href="stylesheets/styles.css" />
     <link rel="stylesheet" href="stylesheets/pygment_trac.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/vivus/0.4.6/vivus.min.js"></script>
     <meta name="viewport" content="width=device-width" />
     <!--[if lt IE 9]>
             <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
         <![endif]-->
 </head>
-
 
 
 <body>
@@ -43,7 +43,7 @@
                         <img src="./img/github.svg" width="15px" />
                     </a>
                 </span>
-                <!-- <br /> -->
+                <br />
                 Aristotle's University of Thessaloniki
                 <br />
                 <a href="https://github.com/STEllAR-GROUP/hpx/commits?author=isidorostsa&until=2023-09-12"
@@ -87,22 +87,13 @@ free(t_buffer);
                 Notice that in contrast to when using <code>uninitialized_move</code>, it is
                 perfectly safe to repurpose the source buffer after or even free it.
             </p>
+
             <p>
                 If <code>T</code> is a <i>trivially relocatable</i> type and the buffer is contiguous, then
                 <code>uninitialized_relocate_n</code> will simply
                 call <code>memcpy</code> once, or <code>n</code> times if the buffer is not contiguous. Otherwise it
                 will <code>move</code>+<code>destroy</code> on each object.
             </p>
-
-            <p>
-                For the visual types:
-            
-<div style="display: flex; flex-direction: row;">
-    <img src="./img/traditional_relocation.svg" width="250px" />
-    <img src="./img/p1144_relocation.svg" width="250px" />
-</div>
-            </p>
-
 
             <p>
                 Incomplete support for structured bindings in the analyzer
@@ -115,56 +106,128 @@ free(t_buffer);
             <h2>Approach</h2>
 
             <p>
-                There are multiple different ways to declare a structured
-                binding, though from an analysis perspective only 2 of them
-                needs to be treated differently. Binding by value and
-                binding by reference.
+                There are two main steps to implement relocation semantics. First, we need to
+                determine if a type is trivially relocatable. Second, we need to implement the
+                relocation mechanism. There is also a third step, which is specific to HPX,
+                and that is to implement the parallelized version of the procedure.
+            </p>
+
+            <h3>1) Detecting trivial relocatability</h3>
+
+            <p>
+                Most types are agnostic to relocation. For example, an <code>std::vector</code> object <b>is</b>
+                trivially relocatable, because it is just a wrapper around pointer to a buffer.
+
+            </p>
+            <div style="text-align: center;">
+                <img src="./img/vector_relocation_no_border.svg" width="85%" />
+            </div>
+            <br />
+            <p>
+                It is perfectly safe to <code>memcpy</code> an <code>std::vector</code> to a new location and
+                <code>std::free</code>
+                the old object. That is because:
+            </p>
+            <ul style="margin-top: -10px;">
+                <li>No destructor will be called and thus the buffer will stay intact</li>
+                <li>The new vector will take care of deallocating the buffer when it is destroyed</li>
+            </ul>
+            <p>
+                In contrast, an <code>std::string</code> <b>is not</b> trivially relocatable, since
+                it contains a pointer to an internal buffer that is used for small string optimization (sso).
+            </p>
+
+            <div style="text-align: center;">
+                <img src="./img/string_relocation_no_border.svg" width="85%" />
+            </div>
+            <br />
+            <p>
+                The copied object will point to the same buffer as the original, and when the original object is
+                <code>std::free</code>-ed, the copied object will be left with a dangling pointer.
             </p>
 
             <p>
-                When a binding is created by value, the initializer is first
-                copied, and the identifiers refer to the fields/elements of
-                the copy. In the other case no copy gets created, the
-                identifiers refer to the values inside the original
-                initializer instead.
+                Another example of a <b>non</b>-trivially relocatable type is <code>std::list</code>. It is a circularly
+                linked
+                list, so the last element points to the first.
+            </p>
+            <div style="text-align: center;">
+                <img src="./img/list_relocation_no_border.svg" width="85%" />
+            </div>
+            <br />
+            <p>
+                If we were to <code>memcpy</code> the list (the first node) to a new location, the last element would
+                still point to the old location, so after <code>free</code>-ing, that pointer would be dangling.
             </p>
 
             <p>
-                There are also 3 structured binding syntaxes defined by the
-                standard. Their simplified versions look like this:
-            </p>
-
-            <pre><code>auto [identifier-list] = initializer; (1)
-auto [identifier-list]{initializer};  (2)
-auto [identifier-list](initializer);  (3)
-</code></pre>
-
-            <p>
-                In meaning there's a difference between (1) and (2)/(3) only
-                if the initializer is an array and the binding is created by
-                value. In that case if syntax (1) is used, when the
-                initializer is copied, each element of the copy will be
-                copy-initialized, while using syntax (2)/(3) will result in
-                each element being direct-initialized. When it comes to
-                static analysis, the same operations are performed in all 3
-                cases so there's no need to treat them separately.
+                Unfortunately, there is no tell-tale sign that a type is trivially relocatable. But, there are ways to
+                cover many common cases:
+            <ol>
+                <li>types that are <i>trivially copyable</i>.</li>
+                <li>types that have no methods and are exclusively made up of <i>trivially relocatable</i> sub-members
+                </li>
+            </ol>
             </p>
 
             <p>
-                Although there are also 3 different cases when structured
-                bindings can be created, and each of them does behave
-                differently. While handling binding by reference is
-                relatively simple in all case, by value binding requires
-                major changes in the analyzer for most of them.
+                We can test for the first case using <code>std::is_trivially_copyable</code>. We can not cover the
+                second case with today's C++. And in any case it would be a very limited solution. For example
+                neither cases cover <code>std::vector</code>, which is trivially relocatable, but not trivially copyable
+                and it has methods.
             </p>
-
-            <h3>Case 1: binding to data members</h3>
 
             <p>
-                When a binding to data members is created by value, the
-                object is first copied and the identifiers refer to the the
-                non-static data members of the copy.
+                To cover all cases, <a href="https://isocpp.org/files/papers/P1144R8.html">P1144</a> proposes that
+                the user can declare that a type is trivially relocatable.
             </p>
+
+            <p>
+            </p>
+            <!-- This is
+                equal to <code>std::is_trivially_copyable</code> by default and the user can specialize this trait for
+                their types. This was done <a
+                    href="https://github.com/STEllAR-GROUP/hpx/pull/6264/files#diff-4bb96e21b64e86fe4bab527449733bf3bf0e50b6bd9d900c6f1ea5c76599b166"
+                    target="_blank">here</a>, and this  
+                We achieved this is by introducing a new type trait, <code>hpx::is_trivially_relocatable</code>. The user interface we decided to use:
+ -->
+            <p>
+                To achieve this, HPX offers the following interface:
+            </p>
+            <!-- HTML generated using hilite.me -->
+            <div
+                style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
+                <pre style="margin: 0; line-height: 125%">HPX_DECLARE_TRIVIALLY_RELOCATABLE(custom_type);</pre>
+            </div>
+
+            <br />
+            Which expands to:
+            <br />
+            <br />
+            <!-- HTML generated using hilite.me -->
+            <div
+                style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
+                <pre style="margin: 0; line-height: 125%"><span style="font-weight: bold">namespace</span> hpx {                                                            
+    <span style="font-weight: bold">struct</span> is_trivially_relocatable&lt;custom_type&gt; : std::true_type
+    {                                                                      
+    };                                                                     
+}</pre>
+            </div>
+            <br />
+
+            <p>
+                Essentially the user is specializing <code>hpx::is_trivially_relocatable&lt;T&gt;</code> for their type.
+                This trait is <code>false</code> by default. unless the type is trivially copyable. That way we cover
+                the simple cases, but we also let the user benefit
+                from the optimization for their own types, provided they are sure that it is safe to do so.
+            </p>
+
+            <p>
+                Now, our algorithms can use <code>hpx::is_trivially_relocatable&lt;T&gt;</code> to test for trivial 
+                and safely apply the optimization.
+            </p>
+
+
 
             <pre><code>struct S {
     int x;
