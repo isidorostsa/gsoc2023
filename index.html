@@ -275,12 +275,10 @@
                 <br />
 
                 <p>
-                    This amounts to <b>n</b> calls to <code>T(T&&)</code> and <b>n</b>
-                    calls to <code>~T()</code>. Depending
-                    on the type, these operations can be
+                    This amounts to <b>n</b> calls to <code>T</code>'s move-constructor and <b>n</b> and 
+                    to its destructor. Depending on the type, these operations can be
                     expensive. For example, <samp>clang</samp>'s <code>std::vector</code>
-                    will set the <code>data</code>
-                    pointer of the moved-from object to <code>nullptr</code>
+                    will set the <code>data</code> pointer of the moved-from object to <code>nullptr</code>
                     and the <code>size</code> and <code>capacity</code> to <code>0</code>.
                 </p>
 
@@ -301,31 +299,40 @@
                 </p>
 
                 <p>
-                    
+                    The interface the user sees is:
                 </p>
-                   <p>
-                    When a tuple-like type is bound by reference, the
-                    initializer is not copied, but the variables are still
-                    created for each identifier and in this case they are
-                    reference types.
+                <pre><samp>uninitialized_relocate_n(t_buffer, n, t_buffer_new);</samp></pre>
+                <p>
+                    So the implementation details are hidden from them. Internally, the optimized path will be chosen if all of the following conditions are met:
+                    <ol>
+                        <li><code>T</code> is trivially relocatable</li>
+                        <li><code>T</code> is not volatile (<code>memcpy</code> can not be used on volatile objects)</li>
+                        <li>The buffer is contiguous</li>
+                    </ol>
                 </p>
-
-                <!-- HTML generated using hilite.me -->
-                <div
-                    style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
-                    <pre style="margin: 0; line-height: 125%" wrap="true">
-uninitialized_relocate_n(t_buffer, n, t_buffer_new);
-</pre>
-                </div>
+                <p> As seen
+                <a href="https://github.com/STEllAR-GROUP/hpx/pull/6324/files#diff-06d3de7d6faa25401e983a45de9b0053a3544d35fe407544840b85403a5e52c4" target="_blank">here</a>.
+                </p>
 
                 <p>
-                    In both cases the new variables are lvalue reference types,
-                    so both <code>a1</code> and <code>a2</code> have the type of
-                    <code>int &</code> and <code>b1</code> and
-                    <code>b2</code> have the type of <code>char &</code>. Also
-                    these variables are references to the elements of
-                    <code>p</code>.
+                    Testing this for common types, we see that the optimized path is substantially faster.
                 </p>
+
+                <div style="text-align: center;">
+                    <img src="./img/speedup_graph.svg" width="85%"/>
+                    <figcaption>Testing was done on an <a href="https://ark.intel.com/content/www/us/en/ark/products/92981/intel-xeon-processor-e5-2630-v4-25m-cache-2-20-ghz.html" target="_blank">Intel Xeon E5-2630 v4</a> machine</figcaption>
+
+                </div>
+
+                <br />
+
+                <div
+                    style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
+                    <h4>Important note:</h4>
+                    The user must not access or destroy the objects in the <b>original</b> buffer. They are either 
+                    already destroyed or destroying them would ruin the state of the objects in the new buffer.
+                </div>
+
 
                 <h3>Case 3: binding an array</h3>
                 <p>
@@ -349,7 +356,7 @@ auto [x, y, z] = arr;</samp></pre>
                     is also responsible for creating a copy in an
                     implicit copy/move constructor of a class with an array
                     member and when a lambda captures an array by value. This
-                    means that handling the mentioned expression can provide
+                    means that handling the mentioned expraession can provide
                     more information to the analyzer about aggregate types and
                     lambdas.
                 </p>
@@ -798,7 +805,9 @@ void fn() {
                         <a href="https://github.com/orderedlist" target="_blank">orderedlist</a><br />
                         Article template by <a
                             href="https://isuckatcs.github.io/gsoc2022/"
-                            target="_blank">isuckatcs</a></small>
+                            target="_blank">isuckatcs</a><br /><br />
+The benchmarks presented here have been produced using the Aristotle University of Thessaloniki (AUTh) High Performance Computing Infrastructure.
+</small>
                 </p>
             </footer>
         </div>
