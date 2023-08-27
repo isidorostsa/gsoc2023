@@ -69,15 +69,6 @@
                 speedup in higher-level programs.
                 <br />
             </p>
-            <p>
-                If <code>T</code> is a <i>trivially relocatable</i> type and
-                the buffer is contiguous, then
-                <code>uninitialized_relocate_n</code> will simply
-                call <code>memcpy</code> once, or <code>n</code> times if
-                the buffer is not contiguous. Otherwise it
-                will <code>move</code>+<code>destroy</code> on each object.
-            </p>
-
             <h2>Approach</h2>
 
             <p>
@@ -159,7 +150,8 @@
                 identified:
             <ol>
                 <li>Types that are <i>trivially copyable</i></li>
-                <li>Types without methods and composed solely of <i>trivially relocatable</i> sub-members</li>
+                <li id="static_reflection_detector">Types without methods and composed solely of <i>trivially
+                        relocatable</i> sub-members</li>
             </ol>
             </p>
 
@@ -343,429 +335,120 @@
             <h3>3&rpar; HPX bindings and parallelization</h3>
             <p>
                 It's easy to see that both the traditional and the optimized
-                approach are <a href="https://en.wikipedia.org/wiki/Embarrassingly_parallel" target="_blank">embarrassingly
-                parallel</a>. Using HPX's parallelization facilities, we can 
+                approach are <a href="https://en.wikipedia.org/wiki/Embarrassingly_parallel"
+                    target="_blank">embarrassingly
+                    parallel</a>. Using HPX's parallelization facilities, we can
                 easily make this into a ready-to-use optimized algorithm. Specifically, the parallelization
-                was achieved using the <code>partitioner_with_cleanup</code> internal facility. The implementation can be
-                seen <a href="https://github.com/STEllAR-GROUP/hpx/pull/6314/files#diff-58bdc51efae495df9ff3062a2703b081fb3be2a412bad4132adbdf8f8cf5a6dcR306"
+                was achieved using the <code>partitioner_with_cleanup</code> internal facility. The implementation can
+                be
+                seen <a
+                    href="https://github.com/STEllAR-GROUP/hpx/pull/6314/files#diff-58bdc51efae495df9ff3062a2703b081fb3be2a412bad4132adbdf8f8cf5a6dcR306"
                     target="_blank">here</a>.
             </p>
 
-
             <p>
-                HPX algorithms are laid out using the <a href="https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1895r0.pdf" target="_blank">tag_invoke</a>
-                pattern. This is an amazingly flexible way to define algorithms, but implementing it 
-                is a bit tricky and has a steep learning curve.
+                The parallelization yields high observable speedup, as seen in the graph below.
             </p>
 
-            </p>
+            <div style="text-align: center;">
+                <img src="./img/parallelization_speedup_graph.svg" width="85%" />
+                <figcaption>Testing was done on an <a
+                        href="https://ark.intel.com/content/www/us/en/ark/products/92981/intel-xeon-processor-e5-2630-v4-25m-cache-2-20-ghz.html"
+                        target="_blank">Intel Xeon E5-2630 v4</a> machine</figcaption>
+            </div>
+
+            <br />
 
             <p>
-                The idea is to copy the array with as little overhead as
-                possible, so for POD arrays the desired approach is to
-                create a
-                <code><a
-                            href="https://clang.llvm.org/docs/analyzer/developer-docs/RegionStore.html#lazy-bindings-lazycompoundval"
-                            target="_blank">LazyCompoundVal</a></code>, which
-                basically means that the analyzer associates the
-                new array with a snapshot of the old one, instead of
-                creating a memberwise copy.
-            </p>
-
-            <p>
-                While it is the desired approach for POD arrays, it is
-                inaccurate for non-POD ones, because the copy constructor
-                can have side effects. For example take a look at this
-                snippet:
-            </p>
-
-            <pre><code>struct S {
-    inline static int c = 0;
-    int i;
-                  
-    S() : i(++c) {}
-    S(const S &amp;copy) { i = copy.i + 1; }
-};
-
-void fn() {
-    S arr[2];
-
-    auto [x, y] = arr;
-}
-</code></pre>
-
-            <p>
-                The copy constructor of <code>S</code> has a side effect,
-                which means it must be evaluated for every element to get an
-                accurate result.
-            </p>
-
-            <p>
-                Initially the analyzer wasn't able to model non-POD arrays,
-                so before it could start evaluating structured bindings to
-                such arrays, it needed to be taught how to create and
-                destroy them.
-            </p>
-
-            <p>
-                The idea is the same for both creating the array and
-                creating a copy of it. The analyzer should call the
-                constructor/copy constructor for each of the elements in
-                order, and construct each element into the specific target
-                memory region. Later when the lifetime of the array ends,
-                the destructors also need to be invoked, but in a reverse
-                order. The destructor of the last element is invoked first.
-            </p>
-
-            <p>
-                Binding by reference works the same way as in case of data
-                members. The array is not copied and the identifiers are
-                references to the elements in the original array.
+                HPX algorithms are laid out using
             </p>
 
             <h2>Implementation</h2>
 
             <ul>
                 <li>
-                    <a href="https://reviews.llvm.org/D127993" target="_blank">D127993</a>
-                    was the first patch applied to the analyzer and it put
-                    the initializer of the structured binding into the
-                    Control Flow Graph. Because the initializer was missing
-                    from the CFG, in some cases it had already been removed
-                    from the analyzer's internal state, before it even
-                    reached the structured binding declaration. As a result
-                    the analyzer had no information about what object were
-                    the identifiers being bound to.
+                    <a href="https://github.com/STEllAR-GROUP/hpx/pull/6212" target="_blank">P6212</a>
+                    Was the PR that introduced the notion of <i>relocatability</i> to HPX. It implemented
+                    the <code>hpx::is_relocatable</code> tag, which is a condition different from trivial
+                    relocatability,
+                    but it is needed to ensure that types marked as trivially relocatable are actually legal to move
+                    in the first place.
                 </li>
                 <br />
                 <li>
-                    <a href="https://reviews.llvm.org/D128064" target="_blank">
-                        D128064
-                    </a>
-                    introduced a "Small array binding policy" to the
-                    analyzer, which is similar to the already existing
-                    "Small struct binding policy". As a result if a
-                    <code>LazyCompoundVal</code> of a sufficiently small
-                    (smaller than 5 elements) array is about to be created,
-                    a by value copy is created instead. This allows the
-                    analyzer to produce more accurate warning messages.
+                    <a href="https://github.com/STEllAR-GROUP/hpx/pull/6264" target="_blank">
+                        P6264
+                    </a> introduced the notion of <i>trivial relocatability</i> to HPX. It implemented the
+                    <code>hpx::is_trivially_relocatable</code> tag, along with the user interface described above.
                 </li>
                 <br />
                 <li>
-                    <a href="https://reviews.llvm.org/D127643" target="_blank">
-                        D127643
-                    </a>
-                    is a simple patch allowing the analyzer to handle
-                    structured bindings to data members. It tells the
-                    analyzer where to look up a required values.
+                    <a href="https://github.com/STEllAR-GROUP/hpx/pull/6324" target="_blank">
+                        P6324
+                    </a> implemented the <code>uninitialized_relocate</code> algorithm in a bare-bones fashion, along
+                    with the
+                    <code>relocate_at</code> algorithm, which is the single element version of the former.
+                    It also implemented the method selection logic, using the <code>hpx::is_trivially_relocatable</code>
+                    tag.
                 </li>
                 <br />
                 <li>
-                    <a href="https://reviews.llvm.org/D126613" target="_blank">D126613</a>
-                    implemented <code>ArrayInitLoopExpr</code> and
-                    structured bindings to POD arrays.
+                    <a href="https://github.com/STEllAR-GROUP/hpx/pull/6314" target="_blank">P6314</a> implemented the
+                    HPX bindings and parallelization of the algorithm, following the <a
+                        href="https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1895r0.pdf"
+                        target="_blank">tag_invoke</a>
+                    pattern used throughout HPX. It also implemented the
+                    <code>uninitialized_relocate_n</code>
+                    which differs only in terms of the API.
                 </li>
                 <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D128716" target="_blank">
-                        D128716
-                    </a>
-                    fixed a bug when an identifier introduced to a reference
-                    type was treated as if it was a non-reference type. An
-                    example snippet that helps understanding the bug:
-                    <br />
-                    <br />
-                    <pre><code>struct S { int &amp;x; };
-
-void fn() {
-    int i = 1;
-    S s{i};
-
-    auto [a] = s;
-}</code></pre>
-                    Here the type of <code>a</code> is <code>int &</code>,
-                    however it was treated as <code>int</code>, which lead
-                    to false positives.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D127973" target="_blank">
-                        D127973
-                    </a>
-                    made it possible to evaluate the constructor of each
-                    element in a non-POD array of less than or equal to 4
-                    elements. The analyzer allows the same statement to be
-                    repeated 4 times by default, hence the 4 element limit.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D129496" target="_blank">
-                        D129496
-                    </a>
-                    applied the ideas of the previous patch to
-                    <code>ArrayInitLoopExpr</code>, and made it possible to
-                    create structured bindings to small non-POD arrays as
-                    well as to evaluate implicit copy and move constructors
-                    of classes/structs with non-POD array fields properly.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D129967" target="_blank">
-                        D129967
-                    </a>
-                    has been extracted from the previous patch and
-                    introduced a new
-                    <code>
-                            <a
-                                href="https://clang.llvm.org/doxygen/classclang_1_1ConstructionContext.html"
-                                target="_blank">
-                                ConstructionContext</a></code>
-                    for lambda captures, and introduced capturing non-POD
-                    arrays in lambdas by value.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D128837" target="_blank">
-                        D128837
-                    </a>
-                    introduced structured bindings to tuple-like types. It
-                    modified the CFG and the
-                    <a href="https://discourse.llvm.org/t/analyzer-an-in-depth-look-at-liveness-analysis-in-the-static-analyzer/56008"
-                        target="_blank">Liveness Analysis</a>
-                    so that a new variable is created for each identifier,
-                    and it's lifetime is properly managed.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131784" target="_blank">
-                        D131784
-                    </a>
-                    fixed an issue introduced by
-                    <a href="https://reviews.llvm.org/D129967" target="_blank">
-                        D129967 </a>, which lead to a crash on copy elided
-                    initialized
-                    lambda captures. E.g.:
-                    <code>[var = S()](){};</code> compiled with
-                    <code>-std=c++17</code> or higher.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131944" target="_blank">
-                        D131944
-                    </a>
-                    removed pattern matching for lambda capture initializers
-                    completely as they were hard to maintain and caused
-                    crashes.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131840" target="_blank">
-                        D131840
-                    </a>
-                    introduced a solution for handling multidimensional
-                    non-POD arrays in <code>ArrayInitLoopExpr</code>, so the
-                    analyzer can properly model when such arrays are used in
-                    structured bindings, lambda captures and implicit
-                    copy/move constructors.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D130737" target="_blank">
-                        D130737
-                    </a>
-                    introduced non-POD array destruction to the analyzer, so
-                    now it's possible to properly reason about non-POD
-                    arrays when they're small enough. Before this patch the
-                    analyzer could reason about non-POD array construction,
-                    but still failed to evaluate their destruction.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131501" target="_blank">
-                        D131501
-                    </a>
-                    introduced special handling for 0 length arrays, which
-                    are basically no-ops, so no machine code is generated
-                    for them. Before this patch they were treated by the
-                    analyzer as if they had 1 element, which could lead to
-                    false positives by invoking the constructor and
-                    destructor once.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131187" target="_blank">
-                        D131187
-                    </a>
-                    added all the temporary data used to evaluate non-POD
-                    array construction and destruction to the
-                    <a href="https://llvm.org/devmtg/2019-10/slides/Dergachev-DevelopingTheClangStaticAnalyzer.pdf"
-                        target="_blank">Exploded Graph</a>
-                    to make it easier to track which element is being
-                    constructed or destructed at a specific point.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131262" target="_blank">
-                        D131262
-                    </a>
-                    increased the accuracy of the bug reports. With this
-                    patch the bug reporter can keep tracking a specific
-                    region even if it encounters a trivial copy/move
-                    construction. This patch also improved tracking values
-                    inside initializer lists a bit.
-                </li>
-            </ul>
-            <h3>Additional patches</h3>
-            <ul>
-                <li>
-                    <a href="https://reviews.llvm.org/D132654" target="_blank">
-                        D132654
-                    </a>
-                    fixed a false positive warning in a
-                    <a href="https://clang.llvm.org/extra/clang-tidy/" target="_blank">clang-tidy</a>
-                    checker that was reported when an array was used as the
-                    initializer of a structured binding or was captured in a
-                    lambda by value.
-                </li>
-                <br />
-                <li>
-                    <a href="https://reviews.llvm.org/D131299" target="_blank">
-                        D131299
-                    </a>
-                    created a new analyzer
-                    <a href="https://clang.llvm.org/docs/analyzer/checkers.html#core-uninitialized-newarraysize-c"
-                        target="_blank">checker</a>
-                    that warns if the expression used to determine the
-                    number of elements inside <code>new[]</code> evaluates
-                    to a garbage value.
-                </li>
             </ul>
 
-            <h2>Results</h2>
-            <p>
-                Structured bindings are a C++17 addition, so testing the
-                changes required projects written in C++17 or above. Finding
-                sufficiently large projects with extensive structured
-                binding usage was quite challenging, since the majority of
-                large open-source C++ projects are written in C++14 or
-                below.
-            </p>
-            <p>
-                Most of the testing was done on
-                <a href="https://github.com/EQMG/Acid" target="_blank">Acid</a>
-                and
-                <a href="https://github.com/WebKit/WebKit" target="_blank">WebKit</a>
-                and their dependencies, including
-                <a href="https://github.com/bulletphysics/bullet3" target="_blank">Bullet</a>,
-                <a href="https://github.com/KhronosGroup/glslang" target="_blank">Glslang</a>
-                and
-                <a href="https://github.com/glfw/glfw" target="_blank">GLFW</a>.
-                On top that, the changes have also been evaluated on
-                several C++14 or earlier open-source projects, including
-                <a href="https://github.com/qt/qtbase" target="_blank">Qt</a>,
-                <a href="https://github.com/sqlite/sqlite" target="_blank">SQLite</a>
-                and
-                <a href="https://github.com/llvm/llvm-project" target="_blank">LLVM</a>
-                itself.
-            </p>
-
-            <p>
-                Both the coverage and the accuracy of the analysis have been
-                improved. On WebKit 81 false positives have been replaced by
-                22 true positives and
-                <a href="https://github.com/llvm/llvm-project/issues/42387" target="_blank">Issue #42387</a>
-                has been resolved too.
-            </p>
+            <p>Code additions in the above PRs are accompanied with the matching tests.</p>
 
             <h2>Future work</h2>
 
             <p>
-                There are several improvements that could increase the
-                accuracy and coverage of the analysis. Most of them are not
-                structured binding specific, but are strongly connected to
-                the implementations used to teach the analyzer about
-                structured bindings.
+                The <a href="https://isocpp.org/files/papers/P1144R8.html">P1144</a> proposal is still active. It's
+                essential to monitor its progress and integrate relevant updates into HPX. While the proposal awaits
+                formal acceptance, prompting it's adoption from community and even applying its advantages within HPX
+                itself.
+            </p>
+
+            <p>
+                Some of the features that are still missing from the HPX implementation are:
             </p>
 
             <ul>
                 <li>
-                    Currently the analyzer can only reason about known
-                    values inside a <code>LazyCompoundVal</code>. It can't
-                    tell the difference between <code>Unknown</code> and
-                    <code>Undefined</code> values. This sometimes leads to
-                    false negatives, so an uninitialized assignment might
-                    not be detected. Modifying the analyzer so that it can
-                    decide what such values are could increase the accuracy
-                    of the analysis.
+                    Currently, it is not possible to <a href="#static_reflection_detector">infer trivially relocatable
+                        types</a> by analyzing their internal structure. Using some new C++20 features and
+                    serialization
+                    techniques, it might be possible to implement a weaker version of this feature, further benefiting
+                    of the end user.
                 </li>
                 <br />
                 <li>
-                    Detecting whether a constructor/destructor has side
-                    effects could also increase the accuracy of the
-                    analysis. For example the
-                    <a href="https://clang.llvm.org/docs/analyzer/checkers.html#deadcode" target="_blank">Dead Code
-                        Checker</a>
-                    relies on such information, and because it's not
-                    provided with that, it can't detect when a non-POD
-                    variable is unused. Also if the analyzer knew if there
-                    are no side effects, invoking the constructor for every
-                    element in a non-POD array could also be avoided.
+                    There is a part of P1144 that is not yet implemented in HPX. This is <code>relocate</code> function
+                    which requires language features that are not yet available in C++. It provides the interface
+                    <code>T t = std::relocate(&t_old)</code>, which is equivalent to either <code>move</code>-ing
+                    <code>t_old</code> into <code>t</code>, or <code>memcpy</code>-ing it and skipping any
+                    constructor or destructor calls if it is trivially relocatable.
                 </li>
                 <br />
-                <li>
-                    Analysis of non-POD
-                    <a href="https://en.cppreference.com/w/c/language/array#Variable-length_arrays"
-                        target="_blank">variable-length arrays</a>.
-                    Currently the analyzer only handles arrays if their
-                    element count is known at compile time.
-                </li>
-                <br />
-                <li>
-                    Creating a new <code>ConstructionContext</code> for
-                    lambdas. Currently lambdas are constructed into a
-                    temporary memory region from which they are moved to
-                    their final region. A
-                    <code>ConstructionContext</code> would allow the
-                    analyzer to construct the lambdas directly into their
-                    final regions, so the temporary construction could be
-                    avoided.
-                </li>
             </ul>
 
             <h2>Special thanks</h2>
-
+            <p> My deepest thanks go to
+                <a href="https://github.com/gonidelis" target="_blank">Giannis Gonidelis</a>,
+                <a href="https://github.com/hkaiser" target="_blank">Hartmut Kaiser</a>, and
+                <a href="https://github.com/Pansysk75" target="_blank">Panagiotis Syskakis</a>
+                for their unwavering mentorship and invaluable insights throughout this project.
+                <br />
             <p>
-                I'd like to thank
-                <a href="https://github.com/haoNoQ" target="_blank">Artem
-                    Dergachev</a>,
-                <a href="https://github.com/xazax-hun" target="_blank">Gábor
-                    Horváth</a>,
-                <a href="https://github.com/Szelethus" target="_blank">Kristóf
-                    Umann</a>
-                and
-                <a href="https://github.com/t-rasmud" target="_blank">Rashmi
-                    Mudduluru</a>
-                for mentoring the project, helping with testing the various
-                patches on a couple of open-source projects and answering my
-                questions even during the weekends.
-                <br />
-                <br />
-                I'd also like to thank
-                <a href="https://github.com/usama54321" target="_blank">Usama
-                    Hameed</a>,
-                <a href="https://github.com/ziqingluo-90" target="_blank">Ziqing
-                    Luo</a>
-                and
-                <a href="https://github.com/malavikasamak" target="_blank">Malavika
-                    Samak</a>
-                for being part our weekly discussions, as well as
-                <a href="https://github.com/steakhal" target="_blank">Balázs
-                    Benics</a>
-                and
-                <a href="https://github.com/martong" target="_blank">Gábor
-                    Márton</a>
-                for code reviews and ideas about how the new features could
-                be improved.
+                Additionally, I'd like to express my gratitude to P1144's author,
+                <a href="https://quuxplusone.github.io/blog/" target="_blank">Arthur O'Dwyer</a>,
+                not only for his pivotal code reviews and insights but also for pioneering the proposal itself.
             </p>
         </section>
         <footer>
