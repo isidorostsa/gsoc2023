@@ -101,7 +101,8 @@
 
             </p>
             <div style="text-align: center;">
-                <img src="./img/vector_relocation_no_border.svg" width="85%" />
+                <img src="./img/vector_relocation_no_border.svg" width="75%" />
+                <figcaption>Trivial relocation of a vector</figcaption>
             </div>
             <br />
             <p>
@@ -125,6 +126,7 @@
 
             <div style="text-align: center;">
                 <img src="./img/string_relocation_no_border.svg" width="85%" />
+                <figcaption>Invalid trivial relocation of an std::string</figcaption>
             </div>
             <br />
             <p>
@@ -141,7 +143,8 @@
                 list, so the last element points to the first.
             </p>
             <div style="text-align: center;">
-                <img src="./img/list_relocation_no_border.svg" width="85%" />
+                <img src="./img/list_relocation_no_border.svg" width="75%" />
+                <figcaption>Invalid trivial relocation of an std::list</figcaption>
             </div>
             <br />
             <p>
@@ -236,6 +239,11 @@
                 objects of type <code>T</code>.
             </p>
 
+            <!-- <div style="text-align: center;">
+                <img src="./img/relocation_before.svg" width="55%" />
+            </div>
+            <br/> -->
+
             <p>
                 The desired state after the relocation is:
             <ol>
@@ -312,7 +320,7 @@
             </p>
 
             <div style="text-align: center;">
-                <img src="./img/speedup_graph.svg" width="85%" />
+                <img src="./img/speedup_graph.svg" width="75%" />
                 <figcaption>Testing was done on an <a
                         href="https://ark.intel.com/content/www/us/en/ark/products/92981/intel-xeon-processor-e5-2630-v4-25m-cache-2-20-ghz.html"
                         target="_blank">Intel Xeon E5-2630 v4</a> machine</figcaption>
@@ -320,6 +328,7 @@
             </div>
 
             <br />
+
 
             <div
                 style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
@@ -335,27 +344,20 @@
             <p>
                 It's easy to see that both the traditional and the optimized
                 approach are <a href="https://en.wikipedia.org/wiki/Embarrassingly_parallel" target="_blank">embarrassingly
-                    parallel</a>. 
+                parallel</a>. Using HPX's parallelization facilities, we can 
+                easily make this into a ready-to-use optimized algorithm. Specifically, the parallelization
+                was achieved using the <code>partitioner_with_cleanup</code> internal facility. The implementation can be
+                seen <a href="https://github.com/STEllAR-GROUP/hpx/pull/6314/files#diff-58bdc51efae495df9ff3062a2703b081fb3be2a412bad4132adbdf8f8cf5a6dcR306"
+                    target="_blank">here</a>.
             </p>
-            <pre><samp>int arr[] = {1, 2, 3};
 
-auto [x, y, z] = arr;</samp></pre>
 
             <p>
-                In the snippet above <code>arr</code> is copied and the
-                identifiers (<code>x</code>, <code>y</code>, <code>z</code>)
-                refer to the elements of the copy. The copy of the array is
-                created by an
-                <code>
-                        <a
-                            href="https://clang.llvm.org/doxygen/classclang_1_1ArrayInitLoopExpr.html"
-                            target="_blank">ArrayInitLoopExpr</a></code>, which
-                is also responsible for creating a copy in an
-                implicit copy/move constructor of a class with an array
-                member and when a lambda captures an array by value. This
-                means that handling the mentioned expraession can provide
-                more information to the analyzer about aggregate types and
-                lambdas.
+                HPX algorithms are laid out using the <a href="https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1895r0.pdf" target="_blank">tag_invoke</a>
+                pattern. This is an amazingly flexible way to define algorithms, but implementing it 
+                is a bit tricky and has a steep learning curve.
+            </p>
+
             </p>
 
             <p>
