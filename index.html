@@ -85,7 +85,7 @@
             <h3>1&rpar; Detecting trivial relocatability</h3>
 
             <p>
-                Most types are agnostic to relocation. For example, an <code>std::vector</code>
+                Most types are agnostic to their location in memory. For example, an <code>std::vector</code>
                 object <b>is</b>
                 trivially relocatable, because it is just a wrapper around
                 pointer to a buffer.
@@ -407,8 +407,8 @@
             <p>
                 The <a href="https://isocpp.org/files/papers/P1144R8.html">P1144</a> proposal is still active. It's
                 essential to monitor its progress and integrate relevant updates into HPX. While the proposal awaits
-                formal acceptance, prompting it's adoption from community and even applying its advantages within HPX
-                itself.
+                formal acceptance, prompting it's adoption from the community and even applying its advantages within HPX
+                itself is a great way to help improve our software.
             </p>
 
             <p>
@@ -418,14 +418,14 @@
             <ul>
                 <li>
                     Currently, it is not possible to <a href="#static_reflection_detector">infer trivially relocatable
-                        types</a> by analyzing their internal structure. Using some new C++20 features and
+                        types</a> by analyzing their internal structure. Using some advanced meta-programming and
                     serialization
                     techniques, it might be possible to implement a weaker version of this feature, further benefiting
-                    of the end user.
+                    the end user.
                 </li>
                 <br />
                 <li>
-                    There is a part of P1144 that is not yet implemented in HPX. This is <code>relocate</code> function
+                    There is a part of P1144 that is not yet implemented in HPX. This is the <code>relocate</code> function,
                     which requires language features that are not yet available in C++. It provides the interface
                     <code>T t = std::relocate(&t_old)</code>, which is equivalent to either <code>move</code>-ing
                     <code>t_old</code> into <code>t</code>, or <code>memcpy</code>-ing it and skipping any
