@@ -85,11 +85,20 @@
             <h3>1&rpar; Detecting trivial relocatability</h3>
 
             <p>
-                Most types are agnostic to their location in memory. For example, an <code>std::vector</code>
-                object <b>is</b>
-                trivially relocatable, because it is just a wrapper around
-                pointer to a buffer.
+                Most, but not all types happen to be agnostic to their location in memory.
+                That is, they can be moved around without any special care. For
+                a complete list of such types, see <a
+                    href="https://quuxplusone.github.io/blog/2019/02/20/p1144-what-types-are-relocatable/"
+                    target="_blank">here</a>.
+                To understand this better, let's delve into some examples.
+            </p>
 
+            <hr>
+
+            <p>
+                For example, an <code>std::vector</code> object <b>is</b> trivially
+                relocatable, because it is just a wrapper around pointer to a buffer.
+                This is what <i>trivially relocating</i> it looks like:
             </p>
             <div style="text-align: center;">
                 <img src="./img/vector_relocation_no_border.svg" width="75%" />
@@ -98,9 +107,7 @@
             <br />
             <p>
                 It is perfectly safe to <code>memcpy</code> an <code>std::vector</code>
-                to a new location and
-                <code>std::free</code>
-                the old object. That is because:
+                to a new location and deallocate the memory holding the old object. That is because:
             </p>
             <ul style="margin-top: -10px;">
                 <li>No destructor will be called and thus the buffer will
@@ -108,11 +115,12 @@
                 <li>The new vector will take care of deallocating the buffer
                     when it is destroyed</li>
             </ul>
+            <hr>
             <p>
                 In contrast, an <code>std::string</code> <b>is not</b>
-                trivially relocatable, since
-                it contains a pointer to the internal buffer that is used
-                for small string optimization (sso).
+                trivially relocatable (<i>in libstdc++</i>), because
+                it contains a pointer to an internal buffer (used
+                for small string optimization). This is what attempting to <i>trivially relocate</i> it would look like:
             </p>
 
             <div style="text-align: center;">
@@ -122,16 +130,15 @@
             <br />
             <p>
                 The copied object will point to the same buffer as the
-                original, and when the original object is
-                <code>std::free</code>-ed, the copied object will be left
-                with a dangling pointer.
+                original, so when the memory holding the original object is
+                freed, the copied one will be left with a dangling pointer.
             </p>
-
+            <hr>
             <p>
                 Another example of a <b>non</b>-trivially relocatable type
-                is <code>std::list</code>. It is a circularly
-                linked
-                list, so the last element points to the first.
+                is <code>std::list</code> (<i>in libc++ and libstdc++</i>). It is a circularly
+                linked list, so the last element points to the first. This is what attempting to <i>trivially
+                    relocate</i> it would look like:
             </p>
             <div style="text-align: center;">
                 <img src="./img/list_relocation_no_border.svg" width="75%" />
@@ -141,43 +148,37 @@
             <p>
                 If we were to <code>memcpy</code> the list (the first node)
                 to a new location, the last element would
-                still point to the old location, so after <code>free</code>-ing,
+                still point to the old location, so after freeing,
                 that pointer would be dangling.
             </p>
-
+            </p>
+            <hr>
             <p>
                 While there's no definitive sign that a type is trivially relocatable, certain common cases can be
                 identified:
             <ol>
                 <li>Types that are <i>trivially copyable</i></li>
-                <li id="static_reflection_detector">Types without methods and composed solely of <i>trivially
-                        relocatable</i> sub-members</li>
+                <li id="static_reflection_detector">Types without special member functions and composed solely of
+                    <i>trivially
+                        relocatable</i> sub-members
+                </li>
             </ol>
             </p>
 
             <p>
                 We can test for the first case using <code>std::is_trivially_copyable</code>.
-                We can not cover the
+                We cannot cover the
                 second case with today's C++. And in any case it would be a
                 very limited solution. For example
                 neither cases cover <code>std::vector</code>, which is
                 trivially relocatable, but not trivially copyable
-                and it has methods.
+                and it does have special member functions.
             </p>
-
             <p>
                 To cover all cases, <a href="https://isocpp.org/files/papers/P1144R8.html">P1144</a>
                 proposes that
                 the user can declare that a type is trivially relocatable.
             </p>
-
-            <p>
-            </p>
-            <!-- This is
-                equal to <code>std::is_trivially_copyable</code> by default and the user can specialize this trait for
-                their types.  and this  
-                We achieved this is by introducing a new type trait, <code>hpx::is_trivially_relocatable</code>. The user interface we decided to use:
- -->
             <p>
                 To achieve this, HPX offers the following interface,
                 implemented <a
@@ -197,30 +198,27 @@
             <!-- HTML generated using hilite.me -->
             <div
                 style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
-                <pre style="margin: 0; line-height: 125%"><span style="font-weight: bold">namespace</span> hpx {
-    <span style="font-weight: bold">struct</span> is_trivially_relocatable&lt;custom_type&gt; : std::true_type
-    {
-    };
-}</pre>
+                <pre style="margin: 0; line-height: 125%">
+<span style="font-weight: bold">struct</span> hpx::is_trivially_relocatable&lt;custom_type&gt; : std::true_type {};</pre>
             </div>
             <br />
 
             <p>
-                Essentially the user is specializing <code>hpx::is_trivially_relocatable&lt;T&gt;</code>
+                Here, the user is specializing <code>hpx::is_trivially_relocatable&lt;T&gt;</code>
                 for their type.
-                For <i>trivially copyable</i> types this is <code>true</code>
-                by default. Otherwise it is
-                <code>false</code>.
+                By default, it's true for <i>trivially copyable</i> types, and false otherwise.
                 That way we automatically optimize for all the simple cases,
-                but we also let the user benefit
-                further with their own types.
+                but we also let the user benefit further with their own types.
             </p>
-
+            <hr>
             <p>
-                Using <code>hpx::is_trivially_relocatable&lt;T&gt;</code> our algorithms can test
-                for trivial relocatability to optimize the relocation.
-            </p>
-
+                It is important to note that trivial relocatability is implementation-specific, so HPX can't
+                automatically optimize the relocation of standard types like <code>std::vector</code>. As the standard
+                lacks a way to denote
+                trivial relocatability, the only way to confirm the safety of such optimization is by examining each STL
+                vendor's
+                implementation and labeling the types as trivially relocatable. However, this is impractical
+                due to the high maintenance it would entail. Hence, users must designate types as trivially relocatable.
             <h3>2&rpar; Applying relocation</h3>
 
             <p>
@@ -298,7 +296,7 @@
                 of the following conditions are met:
             <ol>
                 <li><code>T</code> is trivially relocatable</li>
-                <li><code>T</code> is not volatile (<code>memcpy</code> can not be used on volatile objects)</li>
+                <li><code>T</code> is not volatile (<code>memcpy</code> cannot be used on volatile objects)</li>
                 <li>The buffer is contiguous</li>
             </ol>
             </p>
@@ -407,7 +405,8 @@
             <p>
                 The <a href="https://isocpp.org/files/papers/P1144R8.html">P1144</a> proposal is still active. It's
                 essential to monitor its progress and integrate relevant updates into HPX. While the proposal awaits
-                formal acceptance, prompting it's adoption from the community and even applying its advantages within HPX
+                formal acceptance, prompting it's adoption from the community and even applying its advantages within
+                HPX
                 itself is a great way to help improve our software.
             </p>
 
@@ -425,7 +424,8 @@
                 </li>
                 <br />
                 <li>
-                    There is a part of P1144 that is not yet implemented in HPX. This is the <code>relocate</code> function,
+                    There is a part of P1144 that is not yet implemented in HPX. This is the <code>relocate</code>
+                    function,
                     which requires language features that are not yet available in C++. It provides the interface
                     <code>T t = std::relocate(&t_old)</code>, which is equivalent to either <code>move</code>-ing
                     <code>t_old</code> into <code>t</code>, or <code>memcpy</code>-ing it and skipping any
