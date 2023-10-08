@@ -306,19 +306,18 @@
             </p>
 
             <p>
-                Testing this for common types, we see that the optimized path is substantially faster.
+                Testing this for trivially relocatable STL types, we see that the optimized path is substantially faster.
             </p>
 
             <div style="text-align: center;">
-                <img src="./img/speedup_graph.svg" width="75%" />
+                <img src="./img/plot_10000.svg" width="80%" />
                 <figcaption>Testing was done on an <a
                         href="https://ark.intel.com/content/www/us/en/ark/products/92981/intel-xeon-processor-e5-2630-v4-25m-cache-2-20-ghz.html"
                         target="_blank">Intel Xeon E5-2630 v4</a> machine</figcaption>
-
+                        The code used for testing and the full results can be found <a href="https://gist.github.com/isidorostsa/7426389295f329fa0feaabb55639d6bb">here</a>
             </div>
 
             <br />
-
 
             <div
                 style="background: #ffffff; overflow:auto;width:auto;border:solid gray;border-width:.1em .1em .1em .8em;padding:.2em .6em;">
